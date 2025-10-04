@@ -1,0 +1,20 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "baseUrl": "./",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+    "moduleResolution": "bundler", // Changed from "node" to a supported value
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types", "./types"],
+    "customConditions": ["your-custom-condition"] // Only if you need this
+  },
+  "include": [
+    "src",
+    "Screen",
+    "declarations.d.ts",
+    "types"
+, "node_modules/styles"  ]
+}

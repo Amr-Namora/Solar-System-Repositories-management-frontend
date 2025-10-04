@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "HST",
+    "slug": "AVAR",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/iconlogo.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/iconlogo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/iconlogo.png",
+        "backgroundColor": "#ffffff"
+      },
+      "softwareKeyboardLayoutMode": "pan",
+      "package": "com.noornammora.hst"
+    },
+    "web": {
+      "favicon": "./assets/iconlogo.png"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "extra": {
+      "eas": {
+        "projectId": "c42b08ec-c254-4a53-9d58-15f3a9a905f3"
+      }
+    }
+  }
+}
