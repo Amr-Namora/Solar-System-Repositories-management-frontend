@@ -24,8 +24,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc', 
   },
   logo: {
-    width: 120,
-    height: 120,
+    width: 180,
+    height: 180,
     marginBottom: 24,
   },
   loader: {

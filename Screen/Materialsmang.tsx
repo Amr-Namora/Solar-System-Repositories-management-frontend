@@ -46,11 +46,17 @@ export function MaterialsManagementScreen({ route, navigation }) {
   const [reserveQuantity, setReserveQuantity] = useState('');
   const [userType, setUserType] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  
+  const [selectedParentMaterialId, setSelectedParentMaterialId] = useState<number | null>(null);
   // Animation values
   const fadeAnim = useState(new Animated.Value(0))[0];
   const slideAnim = useState(new Animated.Value(300))[0];
-
+// Add these state variables near the other state declarations
+const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
+const [newMaterial, setNewMaterial] = useState({
+  amount: '',
+  status: 'متاح'
+});
+const statusOptions = ['متاح', 'قيد الوصول', 'مخفي'];
   useEffect(() => {
     if (material) {
       fetchProductTypes();
@@ -70,7 +76,57 @@ export function MaterialsManagementScreen({ route, navigation }) {
       fetchProductDetails(minimalMaterial);
     }
   }, [openClassId]);
+const handleAddMaterial = async () => {
+  // if (!newMaterial.amount.trim()) {
+  //   Alert.alert('خطأ', 'يرجى إدخال الكمية');
+  //   return;
+  // }
+  
+  if (selectedParentMaterialId === null) {
+    Alert.alert('خطأ', 'لم يتم تحديد الفئة');
+    return;
+  }
 
+  try {
+    const token = await AsyncStorage.getItem('access_token');
+    const response = await fetch(`${API_BASE_URL}/add_class/`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        product_id: material.id, // The main product ID
+        class_id: selectedParentMaterialId, // The specific class ID from the item
+        amount: newMaterial.amount,
+        is_available: newMaterial.status
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      
+      // Check for the specific error message about workshop reservation
+      if (errorData.error && errorData.error.includes('هناك حجز مطلوب لصالح ورشة لهذه المادة')) {
+        Alert.alert('خطأ', 'هناك حجز مطلوب لصالح ورشة لهذه المادة. لا يمكنك إضافة كمية جديدة قبل معالجة الحجز.');
+        return;
+      }
+      
+      throw new Error(errorData.error || 'Failed to add material');
+    }
+
+    Alert.alert('تم', 'تمت إضافة المادة بنجاح');
+    setNewMaterial({ amount: '', status: 'متاح' });
+    setShowAddMaterialModal(false);
+    setSelectedParentMaterialId(null);
+    
+    // Refresh the list
+    await fetchProductTypes();
+  } catch (error) {
+    console.error('Add material error:', error);
+    Alert.alert('خطأ', error.message || 'فشل في إضافة المادة');
+  }
+};
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
@@ -405,12 +461,120 @@ export function MaterialsManagementScreen({ route, navigation }) {
     setEditModalType('');
   };
 
+  const handleUndeleteItem = async (item) => {
+    console.log('Undelete button clicked for:', item.name);
+    
+    Alert.alert(
+      'تفعيل المادة',
+      `هل أنت متأكد من أنك تريد تفعيل ${item.name}؟`,
+      [
+        { text: 'إلغاء', style: 'cancel', onPress: () => console.log('Undelete cancelled') },
+        { 
+          text: 'تفعيل', 
+          style: 'default',
+          onPress: async () => {
+            console.log('Undelete confirmed, making API call');
+            try {
+              const token = await AsyncStorage.getItem('access_token');
+              
+              if (!token) {
+                throw new Error('Authentication token not found');
+              }
+
+              const url = `${API_BASE_URL}/class_type_undelete/`;
+              console.log('API URL:', url);
+
+              // إرسال البيانات كـ FormData كما فعلنا في الـ delete
+              const formData = new FormData();
+              formData.append('class_id', item.id.toString());
+
+              const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`
+                },
+                body: formData
+              });
+
+              console.log('API Response status:', response.status);
+              
+              if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to undelete type');
+              }
+
+              // تحديث القائمة بعد التفعيل بنجاح
+              await fetchProductTypes();
+              Alert.alert('تم', `تم تفعيل ${item.name} بنجاح`);
+            } catch (error) {
+              console.error('Undelete error details:', error);
+              Alert.alert('خطأ', error.message || 'فشل في تفعيل المادة');
+            }
+          }
+        }
+      ]
+    );
+  };
+  const handleUpdateAmount = async () => {
+    if (!editingItem || !newQuantity) {
+      Alert.alert('خطأ', 'يرجى إدخال الكمية');
+      return;
+    }
+
+    try {
+      const token = await AsyncStorage.getItem('access_token');
+      
+      const payload = {
+        amount_id: editingItem.id,
+        new_amount: newQuantity
+      };
+      
+      const response = await fetch(`${API_BASE_URL}/edit_amount_Amount`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const contentType = response.headers.get('content-type');
+      if (!response.ok) {
+        let errorMessage = 'فشل في تعديل الكمية';
+        if (contentType?.includes('application/json')) {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } else {
+          const text = await response.text();
+          errorMessage = text || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      // تحديث البيانات وإغلاق النافذة
+      if (selectedMaterial) {
+        setSelectedMaterial(null);
+      }
+      await fetchProductTypes();
+      setEditingItem(null);
+      setNewQuantity('');
+      setEditModalType('');
+      
+      setTimeout(() => {
+        Alert.alert('تم', 'تم تحديث الكمية بنجاح');
+      }, 0);
+    } catch (error) {
+      Alert.alert('خطأ', error.message || 'فشل في تحديث الكمية');
+      console.error(error);
+    }
+  };
+
   const handleDeleteItem = async (item) => {
     console.log('Delete button clicked for:', item.name);
     
     Alert.alert(
-      'حذف',
-      `هل أنت متأكد من أنك تريد حذف ${item.name}؟`,
+      'الغاء التفعيل',
+      ` هل أنت متأكد من أنك تريد الغاء تفعيل هذه المادة${item.name}؟`,
       [
         { text: 'إلغاء', style: 'cancel', onPress: () => console.log('Delete cancelled') },
         { 
@@ -450,7 +614,7 @@ export function MaterialsManagementScreen({ route, navigation }) {
 
               // Refresh from server instead of removing locally
               await fetchProductTypes();
-              Alert.alert('تم', `تم حذف ${item.name} بنجاح`);
+              Alert.alert('تم', `تم الغاء تفعيل ${item.name} بنجاح`);
             } catch (error) {
               console.error('Delete error details:', error);
               Alert.alert('خطأ', error.message || 'فشل في حذف النوع');
@@ -614,45 +778,66 @@ export function MaterialsManagementScreen({ route, navigation }) {
               
               {/* الأزرار على اليسار */}
               <View style={styles.itemActions}>
-                
-                                    {item.is_working !== false && isAdmin && (
+  {/* Add Button - Only show for admin users */}
+  {isAdmin && item.is_working !== false && (
+    <TouchableOpacity 
+      style={[styles.actionButton, styles.addButton]}
+      onPress={() => {
+        setSelectedParentMaterialId(item.id); // Set the class_id
+        setShowAddMaterialModal(true);
+      }}
+      activeOpacity={0.8}
+    >
+      <Feather name="plus" size={16} color="white" />
+    </TouchableOpacity>
+  )}
 
-                    <TouchableOpacity 
-                      style={[styles.actionButton, styles.editButton]}
-                      onPress={() => handleEditItem(item)}
-                      activeOpacity={0.8}
-                    >
-                      <Feather name="edit" size={16} color="white" />
-                    </TouchableOpacity>
-                                    )}
+  {item.is_working !== false && isAdmin && (
+    <TouchableOpacity 
+      style={[styles.actionButton, styles.editButton]}
+      onPress={() => handleEditItem(item)}
+      activeOpacity={0.8}
+    >
+      <Feather name="edit" size={16} color="white" />
+    </TouchableOpacity>
+  )}
 
-                    {isBoss && item.is_working !== false && (
-                  <>
-                    <TouchableOpacity 
-                      style={[
-                        styles.actionButton,
-                        styles.deleteButton,
-                        item.is_empyt === true && { backgroundColor: '#94a3b8' }
-                      ]}
-                      onPress={item.is_empyt === true ? undefined : () => handleDeleteItem(item)}
-                      disabled={item.is_empyt === true}
-                      activeOpacity={0.8}
-                    >
-                      <Feather name="trash" size={16} color="white" />
-                    </TouchableOpacity>
-                  </>
-                )}
+  {isBoss && item.is_working !== false && (
+    <>
+      <TouchableOpacity 
+        style={[
+          styles.actionButton,
+          styles.deleteButton,
+          item.is_empyt === true && { backgroundColor: '#94a3b8' }
+        ]}
+        onPress={item.is_empyt === true ? undefined : () => handleDeleteItem(item)}
+        disabled={item.is_empyt === true}
+        activeOpacity={0.8}
+      >
+        <Feather name="trash" size={16} color="white" />
+      </TouchableOpacity>
+    </>
+  )}
+   { item.is_working === false && (
+    <TouchableOpacity 
+      style={[styles.actionButton, styles.undeleteButton]}
+      onPress={() => handleUndeleteItem(item)}
+      activeOpacity={0.8}
+    >
+      <Feather name="refresh-ccw" size={16} color="white" />
+    </TouchableOpacity>
+  )}
 
-                {item.is_working !== false && (
-                  <TouchableOpacity 
-                    style={[styles.actionButton, styles.detailsButton]}
-                    onPress={() => handleItemPress(item)}
-                    activeOpacity={0.8}
-                  >
-                    <Feather name="info" size={16} color="white" />
-                  </TouchableOpacity>
-                )}
-              </View>
+  {item.is_working !== false && (
+    <TouchableOpacity 
+      style={[styles.actionButton, styles.detailsButton]}
+      onPress={() => handleItemPress(item)}
+      activeOpacity={0.8}
+    >
+      <Feather name="info" size={16} color="white" />
+    </TouchableOpacity>
+  )}
+</View>
             </Animated.View>
           ))}
           
@@ -680,6 +865,8 @@ export function MaterialsManagementScreen({ route, navigation }) {
                 value={editName}
                 onChangeText={setEditName}
                 placeholder="أدخل الاسم الجديد"
+                  placeholderTextColor="#9ca3af" // <--- ADD THIS LINE (Gray color)
+
               />
               
               <View style={styles.modalActions}>
@@ -728,6 +915,33 @@ export function MaterialsManagementScreen({ route, navigation }) {
                 <ScrollView contentContainerStyle={{ padding: 16 }}>
                   {selectedMaterial?.items && selectedMaterial.items.map((item) => (
                     <View key={item.id} style={styles.detailCard}>
+                        {/* الزر المصغر في الزاوية العلوية اليمنى لتعديل الكمية */}
+  {isAdmin && item.status !== 'محجوز' && item.status !== 'مطلوب للشراء' && (
+    <TouchableOpacity
+      style={[
+        styles.actionButton, 
+        styles.detailsButton, // استخدمنا لون أزرق موجود في الستايلات
+        { 
+          position: 'absolute', 
+          top: 16, 
+          left: 16, 
+          width: 34,      // تصغير العرض
+          height: 34,     // تصغير الارتفاع
+          borderRadius: 17, // جعله دائرياً تماماً
+          marginLeft: 0,  // إلغاء أي هوامش من الستايل الأصلي
+          zIndex: 10      // لجعله قابلاً للنقر فوق أي عنصر
+        }
+      ]}
+      onPress={() => {
+        setEditingItem(item);
+        setNewQuantity(item.quantity.toString());
+        setEditModalType('amount');
+      }}
+    >
+      <Feather name="edit-2" size={14} color="white" />
+    </TouchableOpacity>
+  )}
+
                       <Text style={styles.detailName}>{item.name}</Text>
                       <Text style={styles.detailType}>{item.type}</Text>
                       <Text style={styles.detailDesc}>{item.description}</Text>
@@ -752,20 +966,20 @@ export function MaterialsManagementScreen({ route, navigation }) {
                           </Text>
                         </TouchableOpacity>
 
-                        {isAdmin && item.status !== 'محجوز' && (
-                          <TouchableOpacity
-                            style={[styles.reserveBtn, { backgroundColor: '#f59e0b' }]}
-                            onPress={() => {
-                              setEditingItem(item);
-                              setNewStatus(item.status);
-                              setNewQuantity(item.quantity.toString());
-                              setEditModalType('status'); // Set modal type to status editing
-                            }}
-                          >
-                            <Feather name="edit" size={16} color="white" />
-                            <Text style={styles.reserveBtnText}>تعديل الحالة</Text>
-                          </TouchableOpacity>
-                        )}
+           {isAdmin && item.status !== 'محجوز' &&item.status !== 'مطلوب للشراء' && (
+  <TouchableOpacity
+    style={[styles.reserveBtn, { backgroundColor: '#f59e0b' }]}
+    onPress={() => {
+      setEditingItem(item);
+      setNewStatus(item.status);
+      setNewQuantity(item.quantity.toString());
+      setEditModalType('status'); // Set modal type to status editing
+    }}
+  >
+    <Feather name="edit" size={16} color="white" />
+    <Text style={styles.reserveBtnText}>تعديل الحالة</Text>
+  </TouchableOpacity>
+)}           
                       </View>
                     </View>
                   ))}
@@ -792,6 +1006,8 @@ export function MaterialsManagementScreen({ route, navigation }) {
                 style={styles.input}
                 keyboardType="numeric"
                 placeholder="أدخل الكمية"
+                  placeholderTextColor="#9ca3af" // <--- ADD THIS LINE (Gray color)
+
                 value={reserveQuantity}
                 onChangeText={setReserveQuantity}
               />
@@ -833,7 +1049,6 @@ export function MaterialsManagementScreen({ route, navigation }) {
               <Text style={styles.label}>الكمية</Text>
               <TextInput
                 style={styles.modalInput}
-                placeholder="الكمية"
                 keyboardType="numeric"
                 value={newQuantity}
                 onChangeText={setNewQuantity}
@@ -882,6 +1097,117 @@ export function MaterialsManagementScreen({ route, navigation }) {
             </View>
           </View>
         </Modal>
+        {/* Add Material Modal - adding view 2 */}
+        {/* Edit Amount Modal */}
+        <Modal
+          visible={!!editingItem && editModalType === 'amount'}
+          transparent
+          animationType="fade"
+          onRequestClose={() => {
+            setEditingItem(null);
+            setEditModalType('');
+          }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>تعديل كمية المادة</Text>
+              <Text style={styles.label}>المادة: {editingItem?.name}</Text>
+              
+              <Text style={styles.label}>الكمية الجديدة</Text>
+              <TextInput
+                style={styles.modalInput}
+                keyboardType="numeric"
+                value={newQuantity}
+                onChangeText={setNewQuantity}
+                placeholder="أدخل الكمية"
+                placeholderTextColor="#9ca3af"
+              />
+              
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => {
+                    setEditingItem(null);
+                    setEditModalType('');
+                  }}
+                >
+                  <Text style={styles.cancelText}>إلغاء</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.saveButton}
+                  onPress={handleUpdateAmount}
+                >
+                  <Text style={styles.saveText}>حفظ</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+<Modal
+  visible={showAddMaterialModal}
+  transparent
+  animationType="fade"
+  onRequestClose={() => {
+    setShowAddMaterialModal(false);
+    setSelectedParentMaterialId(null);
+  }}
+>
+  <View style={styles.modalOverlay}>
+    <View style={styles.modalContent}>
+      <Text style={styles.modalTitle}>إضافة كمية  </Text>
+      
+      <Text style={styles.label}>الكمية</Text>
+      <TextInput
+        style={styles.modalInput}
+        keyboardType="numeric"
+        value={newMaterial.amount}
+        onChangeText={(text) => setNewMaterial({...newMaterial, amount: text})}
+      />
+      
+      <Text style={styles.label}>الحالة</Text>
+      <View style={styles.statusContainer}>
+        {statusOptions.map((status) => (
+          <TouchableOpacity
+            key={status}
+            style={[
+              styles.statusOption,
+              newMaterial.status === status && styles.statusOptionSelected,
+            ]}
+            onPress={() => setNewMaterial({...newMaterial, status})}
+          >
+            <Text
+              style={[
+                styles.statusText,
+                newMaterial.status === status && styles.statusTextSelected,
+              ]}
+            >
+              {status}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      
+      <View style={styles.modalActions}>
+        <TouchableOpacity
+          style={styles.cancelButton}
+          onPress={() => {
+            setShowAddMaterialModal(false);
+            setSelectedParentMaterialId(null);
+          }}
+        >
+          <Text style={styles.cancelText}>إلغاء</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.saveButton}
+          onPress={handleAddMaterial}
+          // disabled={!newMaterial.amount}
+        >
+          <Text style={styles.saveText}>إضافة</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
       </View>
     </RefreshableScreen>
   );
@@ -894,7 +1220,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   paddingTop: getStatusBarHeight() + 16, // Add status bar height to padding
   },
-  
+  addButton: {
+  backgroundColor: '#10b981', // Green color for add button
+},
   // Header
   managementHeader: {
     flexDirection: 'row',
@@ -1167,6 +1495,7 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 8,
   },
+  
   reserveBtnDisabled: {
     backgroundColor: '#94a3b8'
   },
@@ -1296,4 +1625,9 @@ const styles = StyleSheet.create({
     color: '#3b82f6',
     fontWeight: '500',
   },
+ 
+  undeleteButton: {
+    backgroundColor: '#0ea5e9', // لون أزرق فاتح مميز لزر الاسترجاع
+  },
+  
 });

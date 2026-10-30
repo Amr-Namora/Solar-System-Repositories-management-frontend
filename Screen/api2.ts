@@ -8,8 +8,9 @@ const HOST = Platform.OS === 'android'
   : '192.168.137.21';
 
 //export const API_BASE_URL = `http://${HOST}:8000`;
-  export const API_BASE_URL = 'https://amrnamora.pythonanywhere.com';
-  //export const API_BASE_URL = 'http://192.168.1.101:8000';
+//  export const API_BASE_URL = 'https://amrnamora.pythonanywhere.com';
+ export const API_BASE_URL = 'http://192.168.1.104:8000';
+//  export const API_BASE_URL = 'https://solar-system-repositories-management-1h39.onrender.com';
 
 const api = axios.create({ baseURL: API_BASE_URL });
 
@@ -27,11 +28,23 @@ export const sendReservation = (payload: {
   username: string;
 }) => api.post('/send_reservation/', payload);
 
+
+export const sendRequestedReservation = (payload: {
+  Reservation_id: number;
+  username: string;
+}) => api.post('/send_requested_reservation/', payload);
+
+
 // ... existing code ...
 export const confirmReservation = (payload: {
   Reservation_id: number;
   username: string;
 }) => api.post('/confirm_reservation/', payload);
+
+export const confirmRequestedReservation = (payload: {
+  Reservation_id: number;
+  username: string;
+}) => api.post('/confirm_requested_reservation/', payload);
 
 // src/screens/api2.ts
 // ← below confirmReservation
@@ -41,6 +54,11 @@ export const cancelReservation = (payload: {
   Reservation_id: number;
   username: string;
 }) => api.post('/cancle_reservation/', payload);
+
+export const cancelRequestedReservation = (payload: {
+  Reservation_id: number;
+  username: string;
+}) => api.post('/cancle_requested_reservation/', payload);
 
 
 export default api;

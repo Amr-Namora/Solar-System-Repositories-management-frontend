@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "HST",
-    "slug": "AVAR",
-    "version": "1.0.0",
+    "slug": "products",
+    "version": "1.2.3",
     "orientation": "portrait",
     "icon": "./assets/iconlogo.png",
     "userInterfaceStyle": "light",
@@ -17,15 +17,18 @@
         "backgroundColor": "#ffffff"
       },
       "softwareKeyboardLayoutMode": "pan",
-      "package": "com.noornammora.hst"
+      "package": "com.noornammora.hst",
+      "permissions": ["NOTIFICATIONS"],
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/iconlogo.png"
     },
     "assetBundlePatterns": ["**/*"],
+    "plugins": ["expo-notifications"],
     "extra": {
       "eas": {
-        "projectId": "c42b08ec-c254-4a53-9d58-15f3a9a905f3"
+        "projectId": "0bd52c2b-2c90-40f5-811d-62000f687ade"
       }
     }
   }

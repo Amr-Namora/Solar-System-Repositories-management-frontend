@@ -1,8 +1,13 @@
-  import React from 'react';
+//  App.tsx
+import React from 'react';
   import { NavigationContainer } from '@react-navigation/native';
   import { createNativeStackNavigator } from '@react-navigation/native-stack';
   import { SafeAreaProvider } from 'react-native-safe-area-context';
   import { StatusBar, View } from 'react-native';
+import { useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { sendPushTokenToBackend } from './utils/pushNotifications';
+import { API_BASE_URL } from './Screen/api2'; // adjust to your real path
 
   import Login from './Screen/login';
   import Home from './Screen/home';
@@ -23,11 +28,14 @@
   import Index from './Screen/index';
   import AdminStores from './Screen/AdminStores';
   import AdminReposotories from './Screen/AdminReposotories';
-  import AdminWorkshops from './Screen/AdminWorkshops';
+  import AdminWorkshops from './Screen/Workshops';
+  import Customer from './Screen/Customer';
   import StoreMaterials from './Screen/store';
   import AppLoader from './component/AppLoader';
 import Aworkshop from 'Screen/w-admin';
-
+import EndedWorkshops from 'Screen/Admin_Ended_workshops';
+import AW_EndedWorkshops from 'Screen/AW_Ended_workshops';
+import Workshops from './Screen/Workshops';
 
   export type RootStackParamList = {
     Login: undefined;
@@ -50,15 +58,25 @@ import Aworkshop from 'Screen/w-admin';
     AdminReposotories: undefined;
     RepositoryMaterials:undefined;
     MyStoreScreen: undefined;
-    AdminWorkshops:undefined;
+    Workshops:undefined;
     Aworkshop:undefined;
     PersonalProfile: undefined; 
-
+    Ended_workshops:undefined;
+    Customer:undefined;
+    AW_EndedWorkshops:undefined;
   };
 
   const Stack = createNativeStackNavigator<RootStackParamList>();
 
   export default function App() {
+     useEffect(() => {
+    (async () => {
+      const isLoggedIn = await AsyncStorage.getItem('isLoggedIn');
+      if (isLoggedIn === 'true') {
+        await sendPushTokenToBackend(API_BASE_URL);
+      }
+    })();
+  }, []);
     return (
       <SafeAreaProvider>
         <StatusBar translucent backgroundColor="transparent" />
@@ -80,7 +98,10 @@ import Aworkshop from 'Screen/w-admin';
               <Stack.Screen name="AdminReposotories" component={AdminReposotories} />
               <Stack.Screen name="MyStoreScreen" component={MyStoreScreen} />
               <Stack.Screen name="StoreMaterial" component={StoreMaterial} />
-              <Stack.Screen name="AdminWorkshops" component={AdminWorkshops} />
+              <Stack.Screen name="Workshops" component={Workshops} />
+              <Stack.Screen name="Ended_workshops" component={EndedWorkshops} />
+              <Stack.Screen name="AW_EndedWorkshops" component={AW_EndedWorkshops} />
+              <Stack.Screen name="Customer" component={Customer} />
               <Stack.Screen name="NotFound" component={NotFound} />
               <Stack.Screen name="StoreMaterials" component={StoreMaterials} />
               <Stack.Screen name="RepositoryMaterials" component={RepositoryMaterials} />

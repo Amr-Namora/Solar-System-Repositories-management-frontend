@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "469778281497",
+    "project_id": "hst-notification",
+    "storage_bucket": "hst-notification.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:469778281497:android:824f26899dba66b2bba688",
+        "android_client_info": {
+          "package_name": "com.noornammora.hst"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDsivtE0LIpO_FQKVqA_nrnE1ajqdzAk8A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

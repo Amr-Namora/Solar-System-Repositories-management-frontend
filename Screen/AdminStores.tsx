@@ -111,7 +111,7 @@ const AdminStores = () => {
   const handleDeleteStore = async (id: number) => {
     Alert.alert(
       'تأكيد الحذف',
-      'هل أنت متأكد من حذف هذا المتجر؟',
+      ' سيتم حذف هذا المتجر و المستودع الخاص به (ان وجد) هل أنت متأكد انك تريد الحذف؟',
       [
         { text: 'إلغاء', style: 'cancel' },
         {

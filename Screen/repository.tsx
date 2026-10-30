@@ -105,7 +105,7 @@ const RepositoryMaterials: React.FC<RepositoryMaterialsProps> = ({ repository, o
       if (!token) throw new Error('لم يتم العثور على رمز المصادقة');
 
       // Fetch materials for this specific repository
-      const response = await fetch(`${API_BASE_URL}/homeRead/?store_id=${repository.id}`, {
+      const response = await fetch(`${API_BASE_URL}/home/?reposotory_name=${repository.name}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 

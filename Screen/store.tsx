@@ -106,7 +106,7 @@ const StoreMaterials: React.FC<StoreMaterialsProps> = ({ store, onClose }) => {
       const token = await AsyncStorage.getItem('access_token');
       if (!token) throw new Error('لم يتم العثور على رمز المصادقة');
 
-      const response = await fetch(`${API_BASE_URL}/homeRead/?store_id=${store.id}`, {
+      const response = await fetch(`${API_BASE_URL}/home/?reposotory_name=${store.name}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 

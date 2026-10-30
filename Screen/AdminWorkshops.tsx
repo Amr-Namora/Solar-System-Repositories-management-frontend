@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,8 @@ import {
   LayoutAnimation,
   UIManager,
   Platform,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import { commonStyles } from '../styles/commonStyles';
 import { Picker } from '@react-native-picker/picker';
@@ -25,6 +27,7 @@ import RefreshableScreen from '../component/RefreshableScreen';
 import { API_BASE_URL } from './api2';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AppLoader from '../component/AppLoader';
+
 // Enable LayoutAnimation for Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -47,6 +50,7 @@ interface Product {
   description: string;
   total_available: number;
   total_on_way: number;
+  reposotory: string;
 }
 
 interface ProductType {
@@ -87,7 +91,7 @@ interface WorkshopMaterialDetail {
 
 interface WorkshopMaterial {
   id: number;
-  used_in_workshop:number;
+  used_in_workshop: number;
   product_name: string;
   class_name: string;
   amount: number;
@@ -96,9 +100,11 @@ interface WorkshopMaterial {
   workshop_isworking: string;
   items?: WorkshopMaterialItem[];
   loadingDetails?: boolean;
+  newusername?: string; // For transfer destination username
 }
 
-const AdminWorkshops = () => {
+const adminWorkshops = () => {
+    const [currentUsername, setCurrentUsername] = useState("");
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [showAddWorkshopModal, setShowAddWorkshopModal] = useState(false);
   const [showAddMaterialModal, setShowAddMaterialModal] = useState(false);
@@ -118,18 +124,23 @@ const AdminWorkshops = () => {
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [showMaterials, setShowMaterials] = useState(false);
   const [currentWorkshop, setCurrentWorkshop] = useState<Workshop | null>(null);
-  const [expandedIds, setExpandedIds] = useState<number[]>([]);  
+  const [expandedIds, setExpandedIds] = useState<number[]>([]);
   const [showEditQuantityModal, setShowEditQuantityModal] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<WorkshopMaterial | null>(null);
   const [newQuantity, setNewQuantity] = useState('');
   const [editQuantityLoading, setEditQuantityLoading] = useState(false);
-  const [expandedItems, setExpandedItems] = useState<{[key: string]: boolean}>({});
+  const [expandedItems, setExpandedItems] = useState<{ [key: string]: boolean }>({});
   const [newWorkshop, setNewWorkshop] = useState({
     name: '',
     location: '',
   });
+  const [workshopsForTransfer, setWorkshopsForTransfer] = useState<Workshop[]>([]);
+  const [workshopsForTransferLoading, setWorkshopsForTransferLoading] = useState(false);
+  const [selectedWorkshopForTransfer, setSelectedWorkshopForTransfer] = useState<string>('');
+  const [selectedWorkshopIdForTransfer, setSelectedWorkshopIdForTransfer] = useState<number | null>(null);
+  const [userType, setUserType] = useState<string>('');
   const [repositoriesForReturn, setRepositoriesForReturn] = useState<Repository[]>([]);
-const [repositoriesForReturnLoading, setRepositoriesForReturnLoading] = useState(false);
+  const [repositoriesForReturnLoading, setRepositoriesForReturnLoading] = useState(false);
   const [materialForm, setMaterialForm] = useState({
     product: '',
     productType: '',
@@ -137,47 +148,58 @@ const [repositoriesForReturnLoading, setRepositoriesForReturnLoading] = useState
     warehouse: '',
   });
   const [selectedRepository, setSelectedRepository] = useState<string>('');
-const [selectedRepositoryId, setSelectedRepositoryId] = useState<number | null>(null);
+  const [selectedRepositoryId, setSelectedRepositoryId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [addMaterialLoading, setAddMaterialLoading] = useState(false);
- const openEditQuantityModal = (material: WorkshopMaterial) => {
-  setEditingMaterial(material);
-  setNewQuantity(material.amount.toString());
-  setSelectedRepository('');
-  setSelectedRepositoryId(null);
-  setShowEditQuantityModal(true);
   
-  // Use the new API for repositories in edit modal
-  fetchRepositoriesForReturn();
-};
-const fetchRepositoriesForReturn = async () => {
-  try {
-    setRepositoriesForReturnLoading(true);
-    const token = await AsyncStorage.getItem('access_token');
-    if (!token) throw new Error('لم يتم العثور على رمز المصادقة');
-    
-    // Use the reposotory API endpoint
-    const response = await fetch(`${API_BASE_URL}/reposotories/`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    
-    if (!response.ok) throw new Error('فشل في جلب المستودعات للإرجاع');
-    const data = await response.json();
-    
-    if (data.reposotories && Array.isArray(data.reposotories)) {
-      setRepositoriesForReturn(data.reposotories);
+  // ✅ Scroll position preservation
+  const flatListRef = useRef<FlatList>(null);
+  const [scrollOffset, setScrollOffset] = useState<number>(0);
+  const [shouldRestoreScroll, setShouldRestoreScroll] = useState(false);
+
+  // NEW: State for transfer destination type
+  const [transferDestinationType, setTransferDestinationType] = useState<'repository' | 'workshop' | null>(null);
+
+  const openEditQuantityModal = (material: WorkshopMaterial) => {
+    setEditingMaterial(material);
+    setNewQuantity(material.amount.toString());
+    setSelectedRepository('');
+    setSelectedRepositoryId(null);
+    setSelectedWorkshopForTransfer('');
+    setSelectedWorkshopIdForTransfer(null);
+    setTransferDestinationType(null); // Reset selection
+    setShowEditQuantityModal(true);
+    // Fetch both repositories and workshops for transfer
+    fetchRepositoriesForReturn();
+    fetchWorkshopsForTransfer();
+  };
+
+  const fetchRepositoriesForReturn = async () => {
+    try {
+      setRepositoriesForReturnLoading(true);
+      const token = await AsyncStorage.getItem('access_token');
+      if (!token) throw new Error('لم يتم العثور على رمز المصادقة');
+      // Use the reposotory API endpoint
+      const response = await fetch(`${API_BASE_URL}/reposotories/`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('فشل في جلب المستودعات للإرجاع');
+      const data = await response.json();
+      if (data.reposotories && Array.isArray(data.reposotories)) {
+        setRepositoriesForReturn(data.reposotories);
+      }
+    } catch (error) {
+      console.error('Error fetching repositories for return:', error);
+      Alert.alert('خطأ', error.message || 'فشل في تحميل المستودعات للإرجاع');
+    } finally {
+      setRepositoriesForReturnLoading(false);
     }
-  } catch (error) {
-    console.error('Error fetching repositories for return:', error);
-    Alert.alert('خطأ', error.message || 'فشل في تحميل المستودعات للإرجاع');
-  } finally {
-    setRepositoriesForReturnLoading(false);
-  }
-};
+  };
 
   const fetchRepositories = async () => {
     try {
+      const userType = await AsyncStorage.getItem('userType');
       setRepositoriesLoading(true);
       const token = await AsyncStorage.getItem('access_token');
       if (!token) throw new Error('لم يتم العثور على رمز المصادقة');
@@ -218,6 +240,28 @@ const fetchRepositoriesForReturn = async () => {
     }
   };
 
+  const fetchWorkshopsForTransfer = async () => {
+    try {
+      setWorkshopsForTransferLoading(true);
+      const token = await AsyncStorage.getItem('access_token');
+      if (!token) throw new Error('لم يتم العثور على رمز المصادقة');
+      // Use the new API endpoint
+      const response = await fetch(`${API_BASE_URL}/turn_Reservation_to_workshops/`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('فشل في جلب الورشات للنقل');
+      const data = await response.json();
+      if (data.workshops && Array.isArray(data.workshops)) {
+        setWorkshopsForTransfer(data.workshops);
+      }
+    } catch (error) {
+      console.error('Error fetching workshops for transfer:', error);
+      Alert.alert('خطأ', error.message || 'فشل في تحميل الورشات للنقل');
+    } finally {
+      setWorkshopsForTransferLoading(false);
+    }
+  };
+
   const fetchWorkshops = async () => {
     try {
       setLoading(true);
@@ -244,7 +288,7 @@ const fetchRepositoriesForReturn = async () => {
       setProductsLoading(true);
       const token = await AsyncStorage.getItem('access_token');
       if (!token) throw new Error('لم يتم العثور على رمز المصادقة');
-      const response = await fetch(`${API_BASE_URL}/homeRead/`, {
+      const response = await fetch(`${API_BASE_URL}/home_for_reposotory_workshop/`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) throw new Error('فشل في جلب المواد');
@@ -314,9 +358,13 @@ const fetchRepositoriesForReturn = async () => {
           reservation_status: reservation.reservation_type || 'غير محدد',
           workshop_isworking: reservation.workshop_isworking || 'غير محدد',
           used_in_workshop: reservation.used_in_workshop || 0,
+          newusername: reservation.newusername || '',
+
           items: [],
-          loadingDetails: false
+          loadingDetails: false,
         }));
+          setCurrentUsername(data.username || "");
+
         setWorkshopMaterials(transformedMaterials);
         console.log('Transformed materials:', transformedMaterials);
       } else {
@@ -331,52 +379,49 @@ const fetchRepositoriesForReturn = async () => {
       setMaterialsLoading(false);
     }
   };
-const handleConfirmReservation = async (material: WorkshopMaterial) => {
-  try {
-    const token = await AsyncStorage.getItem('access_token');
-    if (!token) {
-      Alert.alert('خطأ', 'لم يتم العثور على رمز المصادقة');
-      return;
+
+  const handleConfirmReservation = async (material: WorkshopMaterial) => {
+    try {
+      const token = await AsyncStorage.getItem('access_token');
+      if (!token) {
+        Alert.alert('خطأ', 'لم يتم العثور على رمز المصادقة');
+        return;
+      }
+      const response = await fetch(`${API_BASE_URL}/confirm_reservation/`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          Reservation_id: material.id,
+          username: 'admin',
+        }),
+      });
+      const responseData = await response.json();
+      if (!response.ok) {
+        throw new Error(responseData.error || 'فشل في تأكيد الاستلام');
+      }
+      Alert.alert('نجاح', 'تم تأكيد الاستلام بنجاح');
+      // Refresh the materials list
+      if (selectedWorkshopId) {
+        fetchWorkshopMaterials(selectedWorkshopId);
+      }
+    } catch (error) {
+      console.error('Error confirming reservation:', error);
+      Alert.alert('خطأ', error.message || 'حدث خطأ أثناء تأكيد الاستلام');
     }
+  };
 
-    const response = await fetch(`${API_BASE_URL}/confirm_reservation/`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        Reservation_id: material.id,
-        username: 'admin', // You might want to get the actual username from AsyncStorage
-      }),
-    });
-
-    const responseData = await response.json();
-
-    if (!response.ok) {
-      throw new Error(responseData.error || 'فشل في تأكيد الاستلام');
-    }
-
-    Alert.alert('نجاح', 'تم تأكيد الاستلام بنجاح');
-    
-    // Refresh the materials list
-    if (selectedWorkshopId) {
-      fetchWorkshopMaterials(selectedWorkshopId);
-    }
-  } catch (error) {
-    console.error('Error confirming reservation:', error);
-    Alert.alert('خطأ', error.message || 'حدث خطأ أثناء تأكيد الاستلام');
-  }
-};
   const fetchMaterialTypes = async (materialId: number, materialName: string) => {
     try {
-      setWorkshopMaterials(prev => prev.map(m => 
-        m.id === materialId ? {...m, loadingDetails: true} : m
-      ));
+      setWorkshopMaterials((prev) =>
+        prev.map((m) => (m.id === materialId ? { ...m, loadingDetails: true } : m))
+      );
       const token = await AsyncStorage.getItem('access_token');
       if (!token) throw new Error('No token found');
       const response = await fetch(
-        `${API_BASE_URL}/product_types/?product_id=${encodeURIComponent(materialId)}`, 
+        `${API_BASE_URL}/product_types/?product_id=${encodeURIComponent(materialId)}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -389,84 +434,114 @@ const handleConfirmReservation = async (material: WorkshopMaterial) => {
         available_amount: item.available_amount || 0,
         reserved: false,
         details: [],
-        loadingDetails: false
+        loadingDetails: false,
       }));
-      setWorkshopMaterials(prev => prev.map(m => 
-        m.id === materialId ? {...m, items: itemsData, loadingDetails: false} : m
-      ));
+      setWorkshopMaterials((prev) =>
+        prev.map((m) =>
+          m.id === materialId ? { ...m, items: itemsData, loadingDetails: false } : m
+        )
+      );
     } catch (e) {
       console.error('Error fetching product types:', e);
       Alert.alert('خطأ', 'فشل في تحميل تفاصيل المادة');
-      setWorkshopMaterials(prev => prev.map(m => 
-        m.id === materialId ? {...m, loadingDetails: false} : m
-      ));
+      setWorkshopMaterials((prev) =>
+        prev.map((m) => (m.id === materialId ? { ...m, loadingDetails: false } : m))
+      );
     }
   };
 
-  const fetchMaterialDetails = async (materialId: number, itemIndex: number, classId: number, productClass: string) => {
+  const fetchMaterialDetails = async (
+    materialId: number,
+    itemIndex: number,
+    classId: number,
+    productClass: string
+  ) => {
     try {
-      setWorkshopMaterials(prev => prev.map(m => {
-        if (m.id === materialId && m.items) {
-          const updatedItems = [...m.items];
-          updatedItems[itemIndex] = {
-            ...updatedItems[itemIndex],
-            loadingDetails: true
-          };
-          return {...m, items: updatedItems};
-        }
-        return m;
-      }));
+      setWorkshopMaterials((prev) =>
+        prev.map((m) => {
+          if (m.id === materialId && m.items) {
+            const updatedItems = [...m.items];
+            updatedItems[itemIndex] = {
+              ...updatedItems[itemIndex],
+              loadingDetails: true,
+            };
+            return { ...m, items: updatedItems };
+          }
+          return m;
+        })
+      );
       const token = await AsyncStorage.getItem('access_token');
       if (!token) throw new Error('No token found');
       const response = await fetch(
-        `${API_BASE_URL}/product_details/?class_id=${encodeURIComponent(String(classId))}`, 
+        `${API_BASE_URL}/product_details/?class_id=${encodeURIComponent(String(classId))}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
       if (!response.ok) throw new Error('Failed to fetch product details');
       const data = await response.json();
-      setWorkshopMaterials(prev => prev.map(m => {
-        if (m.id === materialId && m.items) {
-          const updatedItems = [...m.items];
-          updatedItems[itemIndex] = {
-            ...updatedItems[itemIndex],
-            details: data.serialize,
-            loadingDetails: false
-          };
-          return {...m, items: updatedItems};
-        }
-        return m;
-      }));
+      setWorkshopMaterials((prev) =>
+        prev.map((m) => {
+          if (m.id === materialId && m.items) {
+            const updatedItems = [...m.items];
+            updatedItems[itemIndex] = {
+              ...updatedItems[itemIndex],
+              details: data.serialize,
+              loadingDetails: false,
+            };
+            return { ...m, items: updatedItems };
+          }
+          return m;
+        })
+      );
     } catch (e) {
       console.error('Error fetching product details:', e);
       Alert.alert('خطأ', 'فشل في تحميل تفاصيل المنتج');
-      setWorkshopMaterials(prev => prev.map(m => {
-        if (m.id === materialId && m.items) {
-          const updatedItems = [...m.items];
-          updatedItems[itemIndex] = {
-            ...updatedItems[itemIndex],
-            loadingDetails: false
-          };
-          return {...m, items: updatedItems};
-        }
-        return m;
-      }));
+      setWorkshopMaterials((prev) =>
+        prev.map((m) => {
+          if (m.id === materialId && m.items) {
+            const updatedItems = [...m.items];
+            updatedItems[itemIndex] = {
+              ...updatedItems[itemIndex],
+              loadingDetails: false,
+            };
+            return { ...m, items: updatedItems };
+          }
+          return m;
+        })
+      );
     }
   };
 
   useEffect(() => {
     fetchWorkshops();
     fetchRepositories();
+    const init = async () => {
+      const storedUserType = await AsyncStorage.getItem('userType');
+      setUserType(storedUserType ?? '');
+    };
+    init();
   }, []);
+
+  // ✅ Restore scroll position when showMaterials changes to false
+  useEffect(() => {
+    if (!showMaterials && shouldRestoreScroll && flatListRef.current) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToOffset({ offset: scrollOffset, animated: false });
+        setShouldRestoreScroll(false);
+      }, 100);
+    }
+  }, [showMaterials]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     await fetchWorkshops();
   };
 
+  // ✅ Save scroll position before opening workshop details
   const openWorkshopDetails = async (workshop: Workshop) => {
-    console.log("Opening workshop details for:", workshop.name, "ID:", workshop.id);
+    console.log('Opening workshop details for:', workshop.name, 'ID:', workshop.id);
+    setShouldRestoreScroll(true); // ✅ This saves the scroll position
     setCurrentWorkshop(workshop);
     setSelectedWorkshopId(workshop.id);
     setShowMaterials(true);
@@ -513,7 +588,12 @@ const handleConfirmReservation = async (material: WorkshopMaterial) => {
   };
 
   const handleAddMaterial = async () => {
-    if (!materialForm.product || !materialForm.productType || !materialForm.amount || !materialForm.warehouse) {
+    if (
+      !materialForm.product ||
+      !materialForm.productType ||
+      !materialForm.amount ||
+      !materialForm.warehouse
+    ) {
       Alert.alert('خطأ', 'يرجى ملء جميع الحقول');
       return;
     }
@@ -522,7 +602,7 @@ const handleConfirmReservation = async (material: WorkshopMaterial) => {
       Alert.alert('خطأ', 'يرجى إدخال كمية صحيحة');
       return;
     }
-    const selectedRepository = repositories.find(repo => repo.name === materialForm.warehouse);
+    const selectedRepository = repositories.find((repo) => repo.name === materialForm.warehouse);
     if (!selectedRepository) {
       Alert.alert('خطأ', 'المستودع المحدد غير صحيح');
       return;
@@ -561,10 +641,9 @@ const handleConfirmReservation = async (material: WorkshopMaterial) => {
         } else if (errorMessage.includes('data you entered is not enough')) {
           Alert.alert('خطأ', 'البيانات المدخلة غير كافية');
         } else if (errorMessage.includes('المنتج الذي طلبته موجود في المستودع الاخر')) {
-          console.log('المنتج الذي طلبته موجود في المستودع الاخر')
+          console.log('المنتج الذي طلبته موجود في المستودع الاخر');
           Alert.alert('خطأ', 'المنتج الذي طلبته موجود في المستودع الاخر');
-        }
-        else {
+        } else {
           Alert.alert('خطأ', `حدث خطأ: ${errorMessage}`);
         }
         return;
@@ -749,103 +828,115 @@ const handleConfirmReservation = async (material: WorkshopMaterial) => {
       { cancelable: true }
     );
   };
-const handleUpdateQuantity = async () => {
-  if (!editingMaterial || !newQuantity.trim() || !selectedRepositoryId) {
-    Alert.alert('خطأ', 'يرجى إدخال كمية صحيحة واختيار مستودع');
-    return;
-  }
 
-  const amountValue = parseInt(newQuantity);
-  if (isNaN(amountValue) || amountValue <= 0) {
-    Alert.alert('خطأ', 'يرجى إدخال كمية صحيحة');
-    return;
-  }
-
-  // Validate that new amount is not greater than current amount
-  if (amountValue > editingMaterial.amount) {
-    Alert.alert('خطأ', 'الكمية الجديدة لا يمكن أن تكون أكبر من الكمية الحالية');
-    return;
-  }
-
-  try {
-    setEditQuantityLoading(true);
-    const token = await AsyncStorage.getItem('access_token');
-    if (!token) {
-      Alert.alert('خطأ', 'لم يتم العثور على رمز المصادقة');
+  const handleUpdateQuantity = async () => {
+    if (
+      !editingMaterial ||
+      !newQuantity.trim() ||
+      (!selectedRepositoryId && !selectedWorkshopIdForTransfer)
+    ) {
+      Alert.alert('خطأ', 'يرجى إدخال كمية صحيحة واختيار مكان للنقل');
       return;
     }
-
-    // Call the unused_amount API
-    const response = await fetch(`${API_BASE_URL}/unused_amount/`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        reservation_id: editingMaterial.id,
-        amount: amountValue,
-        reposotory_id: selectedRepositoryId,
-      }),
-    });
-
-    const responseData = await response.json();
-
-    if (!response.ok) {
-      // Handle specific error messages from the backend
-      let errorMessage = responseData.error || 'فشل في تحديث الكمية';
-      
-      if (errorMessage.includes('الكمية التي ادخلتها اكبر من الكمية المستخدمة في الورشة')) {
-        errorMessage = 'الكمية التي أدخلتها أكبر من الكمية المستخدمة في الورشة';
+    if (selectedRepositoryId && selectedWorkshopIdForTransfer) {
+      Alert.alert('خطأ', 'اختر مستودع او ورشة فقط');
+      return;
+    }
+    const amountValue = parseInt(newQuantity);
+    if (isNaN(amountValue) || amountValue < 0) {
+      Alert.alert('خطأ', 'يرجى إدخال كمية صحيحة');
+      return;
+    }
+    // Validate that new amount is not greater than current amount
+    if (amountValue > editingMaterial.amount) {
+      Alert.alert('خطأ', 'الكمية الجديدة لا يمكن أن تكون أكبر من الكمية الحالية');
+      return;
+    }
+    if (amountValue === editingMaterial.amount) {
+      Alert.alert('خطأ', 'الكمية الجديدة يجب أن تكون أقل من الكمية الحالية');
+      return;
+    }
+    try {
+      setEditQuantityLoading(true);
+      const token = await AsyncStorage.getItem('access_token');
+      if (!token) {
+        Alert.alert('خطأ', 'لم يتم العثور على رمز المصادقة');
+        return;
       }
-      
-      throw new Error(errorMessage);
+      // Call the unused_amount API with the new workshop_id parameter
+      const response = await fetch(`${API_BASE_URL}/unused_amount/`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reservation_id: editingMaterial.id,
+          amount: amountValue,
+          reposotory_id: selectedRepositoryId,
+          workshop_id: selectedWorkshopIdForTransfer,
+        }),
+      });
+      const responseData = await response.json();
+      if (!response.ok) {
+        // Handle specific error messages from the backend
+        let errorMessage = responseData.error || 'فشل في تحديث الكمية';
+        if (errorMessage.includes('الكمية التي ادخلتها اكبر من الكمية المستخدمة في الورشة')) {
+          errorMessage = 'الكمية التي أدخلتها أكبر من الكمية المستخدمة في الورشة';
+        }
+        throw new Error(errorMessage);
+      }
+      Alert.alert('نجاح', 'تم تحديث الكمية وإرجاع الفائض بنجاح');
+      setShowEditQuantityModal(false);
+      setEditingMaterial(null);
+      setNewQuantity('');
+      setSelectedRepository('');
+      setSelectedRepositoryId(null);
+      setSelectedWorkshopForTransfer('');
+      setSelectedWorkshopIdForTransfer(null);
+      setTransferDestinationType(null);
+      // Refresh the materials list
+      if (selectedWorkshopId) {
+        fetchWorkshopMaterials(selectedWorkshopId);
+      }
+    } catch (error) {
+      console.error('Error updating quantity:', error);
+      Alert.alert('خطأ', error.message || 'حدث خطأ أثناء تحديث الكمية');
+    } finally {
+      setEditQuantityLoading(false);
     }
+  };
 
-    Alert.alert('نجاح', 'تم تحديث الكمية وإرجاع الفائض بنجاح');
-    setShowEditQuantityModal(false);
-    setEditingMaterial(null);
-    setNewQuantity('');
-    setSelectedRepository('');
-    setSelectedRepositoryId(null);
-
-    // Refresh the materials list
-    if (selectedWorkshopId) {
-      fetchWorkshopMaterials(selectedWorkshopId);
-    }
-  } catch (error) {
-    console.error('Error updating quantity:', error);
-    Alert.alert('خطأ', error.message || 'حدث خطأ أثناء تحديث الكمية');
-  } finally {
-    setEditQuantityLoading(false);
-  }
-};
   const toggleExpand = (material: WorkshopMaterial) => {
-  const isExpanded = expandedIds.includes(material.id);
-  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-  if (isExpanded) {
-    setExpandedIds((prev) => prev.filter((i) => i !== material.id));
-  } else {
-    setExpandedIds((prev) => [...prev, material.id]);
-    // Remove the fetchMaterialTypes call - we don't need it here
-  }
-};
+    const isExpanded = expandedIds.includes(material.id);
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    if (isExpanded) {
+      setExpandedIds((prev) => prev.filter((i) => i !== material.id));
+    } else {
+      setExpandedIds((prev) => [...prev, material.id]);
+    }
+  };
 
-  const toggleItemExpand = async (materialId: number, itemIndex: number, materialName: string, itemType: string) => {
+  const toggleItemExpand = async (
+    materialId: number,
+    itemIndex: number,
+    materialName: string,
+    itemType: string
+  ) => {
     const key = `${materialId}-${itemIndex}`;
     const isExpanded = expandedItems[key];
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     if (isExpanded) {
-      setExpandedItems(prev => ({
+      setExpandedItems((prev) => ({
         ...prev,
-        [key]: false
+        [key]: false,
       }));
     } else {
-      setExpandedItems(prev => ({
+      setExpandedItems((prev) => ({
         ...prev,
-        [key]: true
+        [key]: true,
       }));
-      const material = workshopMaterials.find(m => m.id === materialId);
+      const material = workshopMaterials.find((m) => m.id === materialId);
       if (material && material.items && material.items[itemIndex]) {
         const item = material.items[itemIndex];
         if (!item.details || item.details.length === 0) {
@@ -855,162 +946,162 @@ const handleUpdateQuantity = async () => {
     }
   };
 
-return (
-  <MainLayout userType="admin">
-    <RefreshableScreen onRefresh={handleRefresh}>
-      <View style={commonStyles.container}>
-        {!showMaterials ? (
-          <>
-            <View style={commonStyles.header}>
-              <Text style={commonStyles.title}>إدارة الورشات</Text>
-            </View>
-            <TouchableOpacity style={styles.addButton} onPress={() => setShowAddWorkshopModal(true)}>
-              <Feather name="plus" size={20} color="white" />
-              <Text style={styles.addButtonText}>إضافة ورشة جديدة</Text>
-            </TouchableOpacity>
-              {loading ? (
-        <AppLoader />
-      ) :  workshops.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <MaterialIcons name="build" size={64} color="#cbd5e1" />
-                <Text style={styles.emptyText}>لا توجد ورش مسجلة</Text>
+  // ✅ Handle scroll to save position
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setScrollOffset(event.nativeEvent.contentOffset.y);
+  };
+
+  return (
+    <MainLayout userType="admin">
+      <RefreshableScreen onRefresh={handleRefresh}>
+        <View style={commonStyles.container}>
+          {!showMaterials ? (
+            <>
+              <View style={commonStyles.header}>
+                <Text style={commonStyles.title}>إدارة الورشات</Text>
               </View>
-            ) : (
-              <FlatList
-                data={workshops}
-                keyExtractor={(item) => item.id.toString()}
-                renderItem={({ item }) => (
-                  <TouchableOpacity 
-                    onPress={() => openWorkshopDetails(item)}
-                    style={styles.workshopCard}
-                  >
-                    <View style={styles.workshopInfo}>
-                      <View style={[
-                        styles.workshopIcon, 
-                        { backgroundColor: item.is_working === 'stopped' ? '#fecaca' : '#dbeafe' }
-                      ]}>
-                        <MaterialIcons 
-                          name="build" 
-                          size={24} 
-                          color={item.is_working === 'stopped' ? '#dc2626' : '#2563eb'} 
-                        />
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => setShowAddWorkshopModal(true)}
+              >
+                <Feather name="plus" size={20} color="white" />
+                <Text style={styles.addButtonText}>إضافة ورشة جديدة</Text>
+              </TouchableOpacity>
+              {loading ? (
+                <AppLoader />
+              ) : workshops.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <MaterialIcons name="build" size={64} color="#cbd5e1" />
+                  <Text style={styles.emptyText}>لا توجد ورش مسجلة</Text>
+                </View>
+              ) : (
+                <FlatList
+                  ref={flatListRef}
+                  data={workshops}
+                  keyExtractor={(item) => item.id.toString()}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      onPress={() => openWorkshopDetails(item)}
+                      style={styles.workshopCard}
+                    >
+                      <View style={styles.workshopInfo}>
+                        <View
+                          style={[
+                            styles.workshopIcon,
+                            { backgroundColor: item.is_working === 'stopped' ? '#fecaca' : '#dbeafe' },
+                          ]}
+                        >
+                          <MaterialIcons
+                            name="build"
+                            size={24}
+                            color={item.is_working === 'stopped' ? '#dc2626' : '#2563eb'}
+                          />
+                        </View>
+                        <View style={{ flex: 1, marginRight: 10 }}>
+                          <Text style={styles.workshopName}>{item.name}</Text>
+                          {item.location ? (
+                            <Text style={styles.workshopDetail}>📍 {item.location}</Text>
+                          ) : null}
+                          {item.manager_name ? (
+                            <Text style={styles.workshopDetail}> المسؤول : {item.manager_name}</Text>
+                          ) : null}
+                          {item.is_working === 'stopped' && (
+                            <Text style={[styles.workshopDetail, { color: '#dc2626' }]}>
+                              ⚠️ معطلة
+                            </Text>
+                          )}
+                        </View>
                       </View>
-                      <View style={{ flex: 1, marginRight: 10 }}>
-                        <Text style={styles.workshopName}>{item.name}</Text>
-                        {item.location ? (
-                          <Text style={styles.workshopDetail}>📍 {item.location}</Text>
-                        ) : null}
-                        {item.manager_name ? (
-                          <Text style={styles.workshopDetail}> المسؤول : {item.manager_name}</Text>
-                        ) : null}
-                        {item.is_working === 'stopped' && (
-                          <Text style={[styles.workshopDetail, { color: '#dc2626' }]}>
-                            ⚠️ معطلة
-                          </Text>
+                      <View style={styles.workshopActions}>
+                        {item.manager === null && item.is_working !== 'done' && (
+                          <TouchableOpacity
+                            style={[styles.actionButton, styles.assignManagerBtn]}
+                            onPress={() => openAssignManagerModal(item.id)}
+                            disabled={item.is_working === 'stopped'}
+                          >
+                            <Text
+                              style={[
+                                styles.actionButtonText,
+                                item.is_working === 'stopped' && { color: '#9ca3af' },
+                              ]}
+                            >
+                              تعيين مدير
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                        {item.manager !== null &&
+                          item.is_working !== 'done' &&
+                          userType === 'admin' && (
+                            <TouchableOpacity
+                              style={[styles.actionButton, styles.assignManagerBtn]}
+                              onPress={() => openAssignManagerModal(item.id)}
+                              disabled={item.is_working === 'stopped'}
+                            >
+                              <Text
+                                style={[
+                                  styles.actionButtonText,
+                                  item.is_working === 'stopped' && { color: '#9ca3af' },
+                                ]}
+                              >
+                                تغيير المدير
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        {item.is_working === 'not started yet' && (
+                          <TouchableOpacity
+                            style={[styles.actionButton, styles.deleteBtn]}
+                            onPress={() => handleDeleteWorkshop(item.id, item.name)}
+                          >
+                            <Text style={[styles.actionButtonText]}>تعطيل</Text>
+                          </TouchableOpacity>
                         )}
                       </View>
-                    </View>
-                    <View style={styles.workshopActions}>
-                      {item.manager === null && item.is_working !== 'done' &&(
-                        <TouchableOpacity
-                          style={[styles.actionButton, styles.assignManagerBtn]}
-                          onPress={() => openAssignManagerModal(item.id)}
-                          disabled={item.is_working === 'stopped'}
-                        >
-                          <Text style={[
-                            styles.actionButtonText,
-                            item.is_working === 'stopped' && { color: '#9ca3af' }
-                          ]}>
-                            تعيين مدير
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                      {item.is_working === 'not started yet' && (
-                        <TouchableOpacity
-                          style={[styles.actionButton, styles.deleteBtn]}
-                          onPress={() => handleDeleteWorkshop(item.id, item.name)}
-                        >
-                          <Text style={[
-                            styles.actionButtonText,
-                          ]}>
-                           معطلة
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </TouchableOpacity>
-                )}
-              />
-            )}
-          </>
-        ) : (
-          <View style={styles.materialsContainer}>
-            <View style={styles.header}>
-              <TouchableOpacity onPress={() => setShowMaterials(false)}>
-                <Ionicons name="arrow-back" size={24} color="#2563eb" />
-              </TouchableOpacity>
-              <Text style={styles.workshopTitle}>{currentWorkshop?.name}</Text>
-              {currentWorkshop?.is_working !== 'stopped' &&currentWorkshop?.is_working !== 'done' && currentWorkshop.manager_name!==null &&(
-                <TouchableOpacity
-                  style={styles.addMaterialButton}
-                  onPress={openAddMaterialModal}
-                >
-                  <Feather name="plus" size={18} color="white" />
-                  <Text style={styles.addMaterialButtonText}>إضافة مادة</Text>
-                </TouchableOpacity>
+                    </TouchableOpacity>
+                  )}
+                  onScroll={handleScroll}
+                  scrollEventThrottle={16}
+                  contentContainerStyle={{ paddingBottom: 20 }}
+                />
               )}
-            </View>
-
-            {materialsLoading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#3b82f6" />
-                <Text style={styles.loadingText}>جاري تحميل المواد...</Text>
+            </>
+          ) : (
+            <View style={styles.materialsContainer}>
+              <View style={styles.header}>
+                <TouchableOpacity onPress={() => setShowMaterials(false)}>
+                  <Ionicons name="arrow-back" size={24} color="#2563eb" />
+                </TouchableOpacity>
+                <Text style={styles.workshopTitle}>{currentWorkshop?.name}</Text>
+                {currentWorkshop?.is_working !== 'stopped' &&
+                  currentWorkshop?.is_working !== 'done' &&
+                  currentWorkshop.manager_name !== null && (
+                    <TouchableOpacity style={styles.addMaterialButton} onPress={openAddMaterialModal}>
+                      <Feather name="plus" size={18} color="white" />
+                      <Text style={styles.addMaterialButtonText}>إضافة مادة</Text>
+                    </TouchableOpacity>
+                  )}
               </View>
-            ) : workshopMaterials.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <MaterialIcons name="inventory" size={64} color="#cbd5e1" />
-                <Text style={styles.emptyText}>لا توجد مواد مسجلة في هذه الورشة</Text>
-              </View>
-            ) : (
-              <ScrollView style={styles.materialsList}>
-                {workshopMaterials.map((material) => {
-                  const isExpanded = expandedIds.includes(material.id);
-                  const materialColor = '#3b82f6';
-                  return (
-                    <View key={material.id} style={[
-                      styles.materialCard,
-                      isExpanded && styles.expandedCard,
-                      { borderLeftColor: materialColor, borderLeftWidth: 4 }
-                    ]}>
-                      <TouchableOpacity
-                        activeOpacity={0.7}
-                        onPress={() => toggleExpand(material)}
-                        style={styles.materialHeader}
+              {materialsLoading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color="#3b82f6" />
+                  <Text style={styles.loadingText}>جاري تحميل المواد...</Text>
+                </View>
+              ) : workshopMaterials.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <MaterialIcons name="inventory" size={64} color="#cbd5e1" />
+                  <Text style={styles.emptyText}>لا توجد مواد مسجلة في هذه الورشة</Text>
+                </View>
+              ) : (
+                <ScrollView style={styles.materialsList}>
+                  {workshopMaterials.map((material) => {
+                    const materialColor = '#3b82f6';
+                    return (
+                      <View
+                        key={material.id}
+                        style={[styles.materialCard, { borderLeftColor: materialColor, borderLeftWidth: 4 }]}
                       >
                         <View style={styles.materialInfo}>
                           <Text style={styles.materialName}>{material.product_name}</Text>
                         </View>
-                        <View style={styles.amountContainer}>
-                            { material.used_in_workshop !== 0 && (
-                              <View style={[styles.amountBadge, { backgroundColor: materialColor }]}>
-                            
-                            <Text style={styles.amountText}>{material.used_in_workshop}</Text>
-                          </View>
-                )}
-                                            { material.used_in_workshop === 0 && (
-
-                          <View style={[styles.amountBadge, { backgroundColor: materialColor }]}>
-                            
-                            <Text style={styles.amountText}>{material.amount}</Text>
-                          </View>)}
-                          <MaterialCommunityIcons
-                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                            size={24}
-                            color={materialColor}
-                          />
-                        </View>
-                      </TouchableOpacity>
-                      {isExpanded && (
                         <View style={styles.itemsContainer}>
                           {material.loadingDetails ? (
                             <View style={styles.loadingContainerSmall}>
@@ -1022,26 +1113,41 @@ return (
                               const itemKey = `${material.id}-${idx}`;
                               const isItemExpanded = expandedItems[itemKey];
                               return (
-                                <View key={idx} style={[styles.itemCard, { borderLeftColor: materialColor }]}>
+                                <View
+                                  key={idx}
+                                  style={[styles.itemCard, { borderLeftColor: materialColor }]}
+                                >
                                   <TouchableOpacity
                                     style={[
                                       styles.itemRow,
-                                      isItemExpanded && styles.itemRowExpanded
+                                      isItemExpanded && styles.itemRowExpanded,
                                     ]}
-                                    onPress={() => toggleItemExpand(material.id, idx, material.product_name, item.type)}
+                                    onPress={() =>
+                                      toggleItemExpand(
+                                        material.id,
+                                        idx,
+                                        material.product_name,
+                                        item.type
+                                      )
+                                    }
                                   >
                                     <View style={styles.itemInfo}>
-                                      <MaterialCommunityIcons 
-                                        name="cube-outline" 
-                                        size={16} 
-                                        color={materialColor} 
+                                      <MaterialCommunityIcons
+                                        name="cube-outline"
+                                        size={16}
+                                        color={materialColor}
                                         style={styles.itemIcon}
                                       />
                                       <View>
                                         <Text style={[styles.itemName, { color: materialColor }]}>
                                           {item.type}
                                         </Text>
-                                        <Text style={[styles.itemName, { color: '#64748b', fontSize: 14, marginTop: 4 }]}>
+                                        <Text
+                                          style={[
+                                            styles.itemName,
+                                            { color: '#64748b', fontSize: 14, marginTop: 4 },
+                                          ]}
+                                        >
                                           متاح: {item.available_amount}
                                         </Text>
                                       </View>
@@ -1057,38 +1163,65 @@ return (
                                       {item.loadingDetails ? (
                                         <View style={styles.loadingContainerSmall}>
                                           <ActivityIndicator size="small" color={materialColor} />
-                                          <Text style={styles.loadingTextSmall}>جاري تحميل التفاصيل...</Text>
+                                          <Text style={styles.loadingTextSmall}>
+                                            جاري تحميل التفاصيل...
+                                          </Text>
                                         </View>
                                       ) : item.details && item.details.length > 0 ? (
                                         item.details.map((detail, detailIdx) => (
-                                          <View key={detailIdx} style={[styles.detailCard, { borderLeftColor: materialColor }]}>
+                                          <View
+                                            key={detailIdx}
+                                            style={[styles.detailCard, { borderLeftColor: materialColor }]}
+                                          >
                                             <View style={styles.detailHeader}>
-                                              <View style={[
-                                                styles.statusBadge,
-                                                detail.is_available === 'متاح' && { backgroundColor: '#22c55e' },
-                                                detail.is_available === 'قيد الوصول' && { backgroundColor: '#f97316' },
-                                                detail.is_available === 'محجوز' && { backgroundColor: '#ef4444' },
-                                                detail.is_available === 'مخفي' && { backgroundColor: '#64748b' }
-                                              ]}>
+                                              <View
+                                                style={[
+                                                  styles.statusBadge,
+                                                  detail.is_available === 'متاح' && { backgroundColor: '#22c55e' },
+                                                  detail.is_available === 'قيد الوصول' && {
+                                                    backgroundColor: '#f97316',
+                                                  },
+                                                  detail.is_available === 'محجوز' && {
+                                                    backgroundColor: '#ef4444',
+                                                  },
+                                                  detail.is_available === 'مخفي' && {
+                                                    backgroundColor: '#64748b',
+                                                  },
+                                                ]}
+                                              >
                                                 <Text style={styles.statusText}>{detail.is_available}</Text>
                                               </View>
                                             </View>
                                             <View style={styles.detailFooter}>
                                               <View style={styles.quantityContainer}>
                                                 <Text style={styles.quantityLabel}>الكمية:</Text>
-                                                <Text style={[styles.quantityValue, { color: materialColor }]}>{detail.amount}</Text>
+                                                <Text
+                                                  style={[styles.quantityValue, { color: materialColor }]}
+                                                >
+                                                  {detail.amount}
+                                                </Text>
                                               </View>
                                               <View style={styles.typeContainer}>
                                                 <Text style={styles.typeLabel}>النوع:</Text>
-                                                <Text style={[styles.typeValue, { color: materialColor }]}>{detail.type}</Text>
+                                                <Text
+                                                  style={[styles.typeValue, { color: materialColor }]}
+                                                >
+                                                  {detail.type}
+                                                </Text>
                                               </View>
                                             </View>
                                           </View>
                                         ))
                                       ) : (
                                         <View style={styles.noDetails}>
-                                          <MaterialCommunityIcons name="information-outline" size={24} color="#94a3b8" />
-                                          <Text style={styles.noDetailsText}>لا توجد تفاصيل متاحة</Text>
+                                          <MaterialCommunityIcons
+                                            name="information-outline"
+                                            size={24}
+                                            color="#94a3b8"
+                                          />
+                                          <Text style={styles.noDetailsText}>
+                                            لا توجد تفاصيل متاحة
+                                          </Text>
                                         </View>
                                       )}
                                     </View>
@@ -1105,422 +1238,532 @@ return (
                                 <Text style={styles.noItemsLabel}>الكمية:</Text> {material.amount}
                               </Text>
                               <Text style={styles.noItemsLine}>
-                                <Text style={styles.noItemsLabel}>المستودع:</Text> {material.reposotory_name}
+                                <Text style={styles.noItemsLabel}>المستودع:</Text>{' '}
+                                {material.reposotory_name}
                               </Text>
-                              { material.used_in_workshop !== 0 && (
+                              {material.used_in_workshop !== -1 && (
+                                <Text style={styles.noItemsLine}>
+                                  <Text style={styles.noItemsLabel}>الكمية التي نفذت:</Text>{' '}
+                                  {material.used_in_workshop}
+                                </Text>
+                              )}
                               <Text style={styles.noItemsLine}>
-                                <Text style={styles.noItemsLabel}>الكمية التي نفذت:</Text> {material.used_in_workshop}
-                              </Text>
-                )}<Text style={styles.noItemsLine}>
                                 <Text style={styles.noItemsLabel}>الحجز:</Text>{' '}
-                                {
-                                  material.reservation_status === 'cancelled' ? 'تم الغاء الطلب' :
-                                  material.reservation_status === 'requested for workshops' ? 'مطلوب للشراء' :
-
-                                  material.reservation_status === 'delivered' ? 'وصل الطلب' :
-                                  material.reservation_status === 'sent' ? 'تم ارسال الطلب' :
-                                  material.reservation_status === 'pending' ? 'لم يتم ارسال الطلب بعد' :
-                                  material.reservation_status
-                                }
+                                 {material.newusername ===currentUsername 
+                                  ? 'اقبل التحويل اولا' 
+                                  :material.newusername !==''
+                                  ? 'قيد التحويل'
+                                  : material.reservation_status === 'cancelled'
+                                  ? 'تم الغاء الطلب'
+                                  : material.reservation_status === 'requested for workshops'
+                                  ? 'مطلوب للشراء'
+                                  : material.reservation_status === 'delivered'
+                                  ? 'وصل الطلب'
+                                  : material.reservation_status === 'sent'
+                                  ? 'تم ارسال الطلب'
+                                  : material.reservation_status === 'pending'
+                                  ? 'لم يتم ارسال الطلب بعد'
+                                  : material.reservation_status}
                               </Text>
                             </View>
                           )}
-
-                          {/* Edit Quantity Button - MOVED TO THE END OF MATERIAL DETAILS */}
-                          {/* In your material card - update the edit button text */}
-{ material.used_in_workshop === 0 && material.reservation_status === 'delivered' && (
-<TouchableOpacity
-  style={styles.editQuantityButton}
-  onPress={() => openEditQuantityModal(material)}
->
-  <Feather name="edit-2" size={16} color="#3b82f6" />
-  <Text style={styles.editQuantityText}>تعديل وإرجاع فائض</Text>
-</TouchableOpacity>
-
-)}
- <TouchableOpacity
-      style={styles.confirmButton}
-      onPress={() => handleConfirmReservation(material)}
-    >
-      <Feather name="check" size={16} color="#22c55e" />
-      <Text style={styles.confirmButtonText}>تم الاستلام</Text>
-    </TouchableOpacity>
+                          {/* Edit Quantity Button */}
+                          {material.used_in_workshop === -1 &&
+                            material.reservation_status === 'delivered' &&
+                            material.workshop_isworking !== 'done' && (
+                              <TouchableOpacity
+                                style={styles.editQuantityButton}
+                                onPress={() => openEditQuantityModal(material)}
+                              >
+                                <Feather name="edit-2" size={16} color="#3b82f6" />
+                                <Text style={styles.editQuantityText}>تعديل وإرجاع فائض</Text>
+                              </TouchableOpacity>
+                            )}
+                          {material.reservation_status === 'sent' && material.newusername ==='' && (
+                            <TouchableOpacity
+                              style={styles.confirmButton}
+                              onPress={() => handleConfirmReservation(material)}
+                            >
+                              <Feather name="check" size={16} color="#22c55e" />
+                              <Text style={styles.confirmButtonText}>تاكيد الاستلام</Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
+                    );
+                  })}
+                  {/* ✅ Moved "End Workshop" button to the bottom of the list */}
+                  {currentWorkshop?.is_working === 'Yes' && currentWorkshop.manager_name !== null && (
+                    <View style={styles.endWorkshopButtonContainer}>
+                      <TouchableOpacity
+                        style={styles.endWorkshopButton}
+                        onPress={handleEndWorkshop}
+                      >
+                        <Feather name="power" size={18} color="white" />
+                        <Text style={styles.endWorkshopButtonText}>تنفيذ الورشة</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </ScrollView>
+              )}
+            </View>
+          )}
+          {/* Add Workshop Modal */}
+          <Modal visible={showAddWorkshopModal} animationType="slide" transparent>
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>إضافة ورشة جديدة</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="اسم الورشة *"
+                  placeholderTextColor="#9ca3af"
+                  value={newWorkshop.name}
+                  onChangeText={(text) => setNewWorkshop({ ...newWorkshop, name: text })}
+                  textAlign="right"
+                />
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="الموقع (اختياري)"
+                  placeholderTextColor="#9ca3af"
+                  value={newWorkshop.location}
+                  onChangeText={(text) => setNewWorkshop({ ...newWorkshop, location: text })}
+                  textAlign="right"
+                />
+                <View style={styles.modalActions}>
+                  <Pressable
+                    style={[styles.modalButton, styles.cancelBtn]}
+                    onPress={() => setShowAddWorkshopModal(false)}
+                  >
+                    <Text style={styles.cancelText}>إلغاء</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.modalButton, styles.saveBtn]}
+                    onPress={handleAddWorkshop}
+                    disabled={!newWorkshop.name.trim()}
+                  >
+                    <Text style={styles.saveText}>إضافة</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </Modal>
+          {/* Add Material Modal */}
+          <Modal visible={showAddMaterialModal} animationType="slide" transparent>
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>إضافة مادة إلى الورشة</Text>
+                <View style={styles.pickerContainer}>
+                  <Text style={styles.pickerLabel}>اختر المادة:</Text>
+                  {productsLoading ? (
+                    <View style={styles.pickerLoadingContainer}>
+                      <ActivityIndicator size="small" color="#3b82f6" />
+                    </View>
+                  ) : (
+                    <View style={styles.pickerWrapper}>
+                      <Picker
+                        selectedValue={materialForm.product}
+                        onValueChange={(itemValue) => handleProductSelect(itemValue)}
+                        style={styles.picker}
+                        dropdownIconColor="#4B5563"
+                      >
+                        <Picker.Item
+                          label="اختر المادة..."
+                          value=""
+                          color="#94a3b8"
+                          style={{ fontSize: 16, paddingVertical: 12 }}
+                        />
+                        {products.map((product) => (
+                          <Picker.Item
+                            key={product.id}
+                            label={product.name + ' - ' + product.reposotory}
+                            value={product.id.toString()}
+                            style={{
+                              fontSize: 16,
+                              fontWeight: '500',
+                              paddingVertical: 12,
+                            }}
+                          />
+                        ))}
+                      </Picker>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.pickerContainer}>
+                  <Text style={styles.pickerLabel}>اختر نوع المادة:</Text>
+                  {typesLoading ? (
+                    <View style={styles.pickerLoadingContainer}>
+                      <ActivityIndicator size="small" color="#3b82f6" />
+                    </View>
+                  ) : (
+                    <View style={styles.pickerWrapper}>
+                      <Picker
+                        selectedValue={materialForm.productType}
+                        onValueChange={(itemValue) =>
+                          setMaterialForm({ ...materialForm, productType: itemValue })
+                        }
+                        style={styles.picker}
+                        dropdownIconColor="#4B5563"
+                        enabled={!!materialForm.product}
+                      >
+                        <Picker.Item
+                          label="اختر نوع المادة..."
+                          value=""
+                          color="#94a3b8"
+                          style={{ fontSize: 16, paddingVertical: 12 }}
+                        />
+                        {productTypes.map((type) => (
+                          <Picker.Item
+                            key={type.id}
+                            label={`${type.type} ${
+                              type.available_amount !== null
+                                ? `(متاح: ${type.available_amount})`
+                                : ''
+                            } ${!type.is_working ? '(غير نشط)' : ''}`}
+                            value={type.id.toString()}
+                            color={!type.is_working ? '#94a3b8' : '#0f172a'}
+                            style={{
+                              fontSize: 16,
+                              fontWeight: type.is_working ? '500' : '400',
+                              paddingVertical: 12,
+                            }}
+                            enabled={type.is_working}
+                          />
+                        ))}
+                      </Picker>
+                    </View>
+                  )}
+                </View>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="الكمية"
+                  placeholderTextColor="#94a3b8"
+                  value={materialForm.amount}
+                  onChangeText={(text) => setMaterialForm({ ...materialForm, amount: text })}
+                  keyboardType="numeric"
+                  textAlign="right"
+                />
+                <View style={styles.pickerContainer}>
+                  <Text style={styles.pickerLabel}>المستودع المورد:</Text>
+                  {repositoriesLoading ? (
+                    <View style={styles.pickerLoadingContainer}>
+                      <ActivityIndicator size="small" color="#3b82f6" />
+                    </View>
+                  ) : (
+                    <View style={styles.pickerWrapper}>
+                      <Picker
+                        selectedValue={materialForm.warehouse}
+                        onValueChange={(itemValue) =>
+                          setMaterialForm({ ...materialForm, warehouse: itemValue })
+                        }
+                        style={styles.picker}
+                        dropdownIconColor="#4B5563"
+                      >
+                        <Picker.Item
+                          label="اختر المستودع..."
+                          value=""
+                          color="#94a3b8"
+                          style={{ fontSize: 16, paddingVertical: 12 }}
+                        />
+                        {repositories.map((repo) => (
+                          <Picker.Item
+                            key={repo.id}
+                            label={repo.name}
+                            value={repo.name}
+                            style={{
+                              fontSize: 16,
+                              fontWeight: '500',
+                              paddingVertical: 12,
+                            }}
+                          />
+                        ))}
+                      </Picker>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.modalActions}>
+                  <Pressable
+                    style={[styles.modalButton, styles.cancelBtn]}
+                    onPress={() => setShowAddMaterialModal(false)}
+                  >
+                    <Text style={styles.cancelText}>إلغاء</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.modalButton, styles.saveBtn]}
+                    onPress={handleAddMaterial}
+                    disabled={addMaterialLoading}
+                  >
+                    {addMaterialLoading ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <Text style={styles.saveText}>إضافة</Text>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </Modal>
+          {/* Assign Manager Modal */}
+          <Modal visible={showAssignManagerModal} animationType="slide" transparent>
+            <View style={styles.modalOverlay}>
+              <View style={[styles.modalContent, styles.elevatedModal]}>
+                <Text style={styles.modalTitle}>تعيين مدير الورشة</Text>
+                <View style={styles.pickerBeautifulContainer}>
+                  {usersLoading ? (
+                    <ActivityIndicator size="small" color="#3b82f6" />
+                  ) : (
+                    <Picker
+                      selectedValue={selectedUser}
+                      onValueChange={(itemValue) => setSelectedUser(itemValue)}
+                      style={styles.pickerBeautiful}
+                      dropdownIconColor="#4B5563"
+                    >
+                      <Picker.Item label="اختر مدير للورشة..." value="" color="#9CA3AF" />
+                      {users.map((user) => (
+                        <Picker.Item key={user.id} label={user.username} value={user.username} />
+                      ))}
+                    </Picker>
+                  )}
+                </View>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={[styles.cancelButton, styles.elevatedButton]}
+                    onPress={() => setShowAssignManagerModal(false)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.cancelText}>إلغاء</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.saveButton,
+                      styles.elevatedButton,
+                      !selectedUser && styles.saveButtonDisabled,
+                    ]}
+                    onPress={handleAssignManager}
+                    activeOpacity={selectedUser ? 0.8 : 1}
+                    disabled={!selectedUser || assignManagerLoading}
+                  >
+                    {assignManagerLoading ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <Text
+                        style={[
+                          styles.saveText,
+                          !selectedUser && styles.saveTextDisabled,
+                        ]}
+                      >
+                        تعيين المدير
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
+          {/* ✅ Edit Quantity Modal - SINGLE UNIFIED BOX DESIGN */}
+          <Modal visible={showEditQuantityModal} animationType="slide" transparent>
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <Text style={styles.modalTitle}>تعديل كمية المادة</Text>
+                <View style={styles.quantityInfoContainer}>
+                  <Text style={styles.quantityInfoLabel}>المادة:</Text>
+                  <Text style={styles.quantityInfoValue}>{editingMaterial?.product_name}</Text>
+                </View>
+                <View style={styles.quantityInfoContainer}>
+                  <Text style={styles.quantityInfoLabel}>الكمية الحالية:</Text>
+                  <Text style={styles.quantityInfoValue}>{editingMaterial?.amount}</Text>
+                </View>
+                <Text style={styles.pickerLabel}>ادخل الكمية التي نفّذت</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="الكمية الجديدة"
+                  placeholderTextColor="#94a3b8"
+                  value={newQuantity}
+                  onChangeText={setNewQuantity}
+                  keyboardType="numeric"
+                  textAlign="right"
+                />
+                {/* ✅ SINGLE UNIFIED BOX WITH SIDE-BY-SIDE TOGGLES - IMPROVED */}
+                <View style={styles.unifiedDestinationBox}>
+                  <Text style={styles.unifiedBoxTitle}>اختر المكان الذي تريد نقل البضائع اليه</Text>
+                  {/* Toggle Buttons Side by Side */}
+                  <View style={styles.toggleContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.toggleButton,
+                        transferDestinationType === 'repository' && styles.toggleButtonActive,
+                      ]}
+                      onPress={() => {
+                        setTransferDestinationType('repository');
+                        setSelectedWorkshopForTransfer('');
+                        setSelectedWorkshopIdForTransfer(null);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.toggleButtonText,
+                          transferDestinationType === 'repository' && styles.toggleButtonTextActive,
+                        ]}
+                      >
+                        المستودع
+                      </Text>
+                      {transferDestinationType === 'repository' && (
+                        <View style={styles.toggleIndicator} />
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.toggleButton,
+                        { borderRightWidth: 0 }, // Remove right border from last button
+                        transferDestinationType === 'workshop' && styles.toggleButtonActive,
+                      ]}
+                      onPress={() => {
+                        setTransferDestinationType('workshop');
+                        setSelectedRepository('');
+                        setSelectedRepositoryId(null);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.toggleButtonText,
+                          transferDestinationType === 'workshop' && styles.toggleButtonTextActive,
+                        ]}
+                      >
+                        الورشة
+                      </Text>
+                      {transferDestinationType === 'workshop' && (
+                        <View style={styles.toggleIndicator} />
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                  {/* Dropdown appears below based on selection */}
+                  {transferDestinationType === 'repository' && (
+                    <View style={styles.dropdownContainer}>
+                      {repositoriesForReturnLoading ? (
+                        <View style={styles.pickerLoadingContainer}>
+                          <ActivityIndicator size="small" color="#3b82f6" />
+                          <Text style={styles.loadingTextSmall}>جاري تحميل المستودعات...</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.pickerWrapper}>
+                          <Picker
+                            selectedValue={selectedRepository}
+                            onValueChange={(itemValue, itemIndex) => {
+                              setSelectedRepository(itemValue);
+                              if (itemValue && repositoriesForReturn[itemIndex - 1]) {
+                                setSelectedRepositoryId(repositoriesForReturn[itemIndex - 1].id);
+                              } else {
+                                setSelectedRepositoryId(null);
+                              }
+                            }}
+                            style={styles.picker}
+                            dropdownIconColor="#4B5563"
+                          >
+                            <Picker.Item
+                              label="اختر المستودع..."
+                              value=""
+                              color="#94a3b8"
+                              style={{ fontSize: 16, paddingVertical: 12 }}
+                            />
+                            {repositoriesForReturn.map((repo) => (
+                              <Picker.Item
+                                key={repo.id}
+                                label={repo.name}
+                                value={repo.name}
+                                style={{
+                                  fontSize: 16,
+                                  fontWeight: '500',
+                                  paddingVertical: 12,
+                                }}
+                              />
+                            ))}
+                          </Picker>
                         </View>
                       )}
                     </View>
-                  );
-                })}
-
-                {/* ✅ Moved "End Workshop" button to the bottom of the list */}
-                {currentWorkshop?.is_working === 'Yes' && currentWorkshop.manager_name!==null &&(
-                  <View style={styles.endWorkshopButtonContainer}>
-                    <TouchableOpacity
-                      style={styles.endWorkshopButton}
-                      onPress={handleEndWorkshop}
-                    >
-                      <Feather name="power" size={18} color="white" />
-                      <Text style={styles.endWorkshopButtonText}>تنفيذ الورشة</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </ScrollView>
-            )}
-          </View>
-        )}
-
-        {/* Add Workshop Modal */}
-        <Modal visible={showAddWorkshopModal} animationType="slide" transparent>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>إضافة ورشة جديدة</Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="اسم الورشة *"
-                placeholderTextColor="#9ca3af"
-                value={newWorkshop.name}
-                onChangeText={(text) => setNewWorkshop({ ...newWorkshop, name: text })}
-                textAlign="right"
-              />
-              <TextInput
-                style={styles.modalInput}
-                placeholder="الموقع (اختياري)"
-                placeholderTextColor="#9ca3af"
-                value={newWorkshop.location}
-                onChangeText={(text) => setNewWorkshop({ ...newWorkshop, location: text })}
-                textAlign="right"
-              />
-              <View style={styles.modalActions}>
-                <Pressable
-                  style={[styles.modalButton, styles.cancelBtn]}
-                  onPress={() => setShowAddWorkshopModal(false)}
-                >
-                  <Text style={styles.cancelText}>إلغاء</Text>
-                </Pressable>
-                <Pressable 
-                  style={[styles.modalButton, styles.saveBtn]} 
-                  onPress={handleAddWorkshop}
-                  disabled={!newWorkshop.name.trim()}
-                >
-                  <Text style={styles.saveText}>إضافة</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        {/* Add Material Modal */}
-        <Modal visible={showAddMaterialModal} animationType="slide" transparent>
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>إضافة مادة إلى الورشة</Text>
-              <View style={styles.pickerContainer}>
-                <Text style={styles.pickerLabel}>اختر المادة:</Text>
-                {productsLoading ? (
-                  <View style={styles.pickerLoadingContainer}>
-                    <ActivityIndicator size="small" color="#3b82f6" />
-                  </View>
-                ) : (
-                  <View style={styles.pickerWrapper}>
-                    <Picker
-                      selectedValue={materialForm.product}
-                      onValueChange={(itemValue) => handleProductSelect(itemValue)}
-                      style={styles.picker}
-                      dropdownIconColor="#4B5563"
-                    >
-                      <Picker.Item 
-                        label="اختر المادة..." 
-                        value="" 
-                        color="#94a3b8"
-                        style={{ fontSize: 16, paddingVertical: 12 }}
-                      />
-                      {products.map((product) => (
-                        <Picker.Item 
-                          key={product.id} 
-                          label={product.name} 
-                          value={product.id.toString()} 
-                          style={{ 
-                            fontSize: 16,
-                            fontWeight: '500',
-                            paddingVertical: 12,
-                          }}
-                        />
-                      ))}
-                    </Picker>
-                  </View>
-                )}
-              </View>
-              <View style={styles.pickerContainer}>
-                <Text style={styles.pickerLabel}>اختر نوع المادة:</Text>
-                {typesLoading ? (
-                  <View style={styles.pickerLoadingContainer}>
-                    <ActivityIndicator size="small" color="#3b82f6" />
-                  </View>
-                ) : (
-                  <View style={styles.pickerWrapper}>
-                    <Picker
-                      selectedValue={materialForm.productType}
-                      onValueChange={(itemValue) => setMaterialForm({ ...materialForm, productType: itemValue })}
-                      style={styles.picker}
-                      dropdownIconColor="#4B5563"
-                      enabled={!!materialForm.product}
-                    >
-                      <Picker.Item 
-                        label="اختر نوع المادة..." 
-                        value="" 
-                        color="#94a3b8"
-                        style={{ fontSize: 16, paddingVertical: 12 }}
-                      />
-                      {productTypes.map((type) => (
-                        <Picker.Item 
-                          key={type.id} 
-                          label={`${type.type} ${type.available_amount !== null ? `(متاح: ${type.available_amount})` : ''} ${!type.is_working ? '(غير نشط)' : ''}`} 
-                          value={type.id.toString()} 
-                          color={!type.is_working ? '#94a3b8' : '#0f172a'}
-                          style={{ 
-                            fontSize: 16,
-                            fontWeight: type.is_working ? '500' : '400',
-                            paddingVertical: 12,
-                          }}
-                          enabled={type.is_working}
-                        />
-                      ))}
-                    </Picker>
-                  </View>
-                )}
-              </View>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="الكمية"
-                placeholderTextColor="#94a3b8"
-                value={materialForm.amount}
-                onChangeText={(text) => setMaterialForm({ ...materialForm, amount: text })}
-                keyboardType="numeric"
-                textAlign="right"
-              />
-              <View style={styles.pickerContainer}>
-                <Text style={styles.pickerLabel}>المستودع المورد:</Text>
-                {repositoriesLoading ? (
-                  <View style={styles.pickerLoadingContainer}>
-                    <ActivityIndicator size="small" color="#3b82f6" />
-                  </View>
-                ) : (
-                  <View style={styles.pickerWrapper}>
-                    <Picker
-                      selectedValue={materialForm.warehouse}
-                      onValueChange={(itemValue) => setMaterialForm({ ...materialForm, warehouse: itemValue })}
-                      style={styles.picker}
-                      dropdownIconColor="#4B5563"
-                    >
-                      <Picker.Item 
-                        label="اختر المستودع..." 
-                        value="" 
-                        color="#94a3b8"
-                        style={{ fontSize: 16, paddingVertical: 12 }}
-                      />
-                      {repositories.map((repo) => (
-                        <Picker.Item 
-                          key={repo.id} 
-                          label={repo.name} 
-                          value={repo.name} 
-                          style={{ 
-                            fontSize: 16,
-                            fontWeight: '500',
-                            paddingVertical: 12,
-                          }}
-                        />
-                      ))}
-                    </Picker>
-                  </View>
-                )}
-              </View>
-              <View style={styles.modalActions}>
-                <Pressable
-                  style={[styles.modalButton, styles.cancelBtn]}
-                  onPress={() => setShowAddMaterialModal(false)}
-                >
-                  <Text style={styles.cancelText}>إلغاء</Text>
-                </Pressable>
-                <Pressable 
-                  style={[styles.modalButton, styles.saveBtn]} 
-                  onPress={handleAddMaterial}
-                  disabled={addMaterialLoading}
-                >
-                  {addMaterialLoading ? (
-                    <ActivityIndicator size="small" color="white" />
-                  ) : (
-                    <Text style={styles.saveText}>إضافة</Text>
                   )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-
-        {/* Assign Manager Modal */}
-        <Modal visible={showAssignManagerModal} animationType="slide" transparent>
-          <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, styles.elevatedModal]}>
-              <Text style={styles.modalTitle}>تعيين مدير الورشة</Text>
-              <View style={styles.pickerBeautifulContainer}>
-                {usersLoading ? (
-                  <ActivityIndicator size="small" color="#3b82f6" />
-                ) : (
-                  <Picker
-                    selectedValue={selectedUser}
-                    onValueChange={(itemValue) => setSelectedUser(itemValue)}
-                    style={styles.pickerBeautiful}
-                    dropdownIconColor="#4B5563"
+                  {transferDestinationType === 'workshop' && (
+                    <View style={styles.dropdownContainer}>
+                      {workshopsForTransferLoading ? (
+                        <View style={styles.pickerLoadingContainer}>
+                          <ActivityIndicator size="small" color="#3b82f6" />
+                          <Text style={styles.loadingTextSmall}>جاري تحميل الورشات...</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.pickerWrapper}>
+                          <Picker
+                            selectedValue={selectedWorkshopForTransfer}
+                            onValueChange={(itemValue, itemIndex) => {
+                              setSelectedWorkshopForTransfer(itemValue);
+                              if (itemValue && workshopsForTransfer[itemIndex - 1]) {
+                                setSelectedWorkshopIdForTransfer(workshopsForTransfer[itemIndex - 1].id);
+                              } else {
+                                setSelectedWorkshopIdForTransfer(null);
+                              }
+                            }}
+                            style={styles.picker}
+                            dropdownIconColor="#4B5563"
+                          >
+                            <Picker.Item
+                              label="اختر ورشة..."
+                              value=""
+                              color="#94a3b8"
+                              style={{ fontSize: 16, paddingVertical: 12 }}
+                            />
+                            {workshopsForTransfer.map((workshop) => (
+                              <Picker.Item
+                                key={workshop.id}
+                                label={workshop.name}
+                                value={workshop.name}
+                                style={{
+                                  fontSize: 16,
+                                  fontWeight: '500',
+                                  paddingVertical: 12,
+                                }}
+                              />
+                            ))}
+                          </Picker>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                  {!transferDestinationType && (
+                    <Text style={styles.placeholderText}>يرجى اختيار نوع المكان أولاً</Text>
+                  )}
+                </View>
+                <View style={styles.modalActions}>
+                  <Pressable
+                    style={[styles.modalButton, styles.cancelBtn]}
+                    onPress={() => {
+                      setShowEditQuantityModal(false);
+                      setEditingMaterial(null);
+                      setNewQuantity('');
+                      setSelectedRepository('');
+                      setSelectedRepositoryId(null);
+                      setSelectedWorkshopForTransfer('');
+                      setSelectedWorkshopIdForTransfer(null);
+                      setTransferDestinationType(null);
+                    }}
                   >
-                    <Picker.Item label="اختر مدير للورشة..." value="" color="#9CA3AF" />
-                    {users.map((user) => (
-                      <Picker.Item key={user.id} label={user.username} value={user.username} />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={[styles.cancelButton, styles.elevatedButton]}
-                  onPress={() => setShowAssignManagerModal(false)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.cancelText}>إلغاء</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles.saveButton,
-                    styles.elevatedButton,
-                    !selectedUser && styles.saveButtonDisabled,
-                  ]}
-                  onPress={handleAssignManager}
-                  activeOpacity={selectedUser ? 0.8 : 1}
-                  disabled={!selectedUser || assignManagerLoading}
-                >
-                  {assignManagerLoading ? (
-                    <ActivityIndicator size="small" color="white" />
-                  ) : (
-                    <Text
-                      style={[
-                        styles.saveText,
-                        !selectedUser && styles.saveTextDisabled,
-                      ]}
-                    >
-                      تعيين المدير
-                    </Text>
-                  )}
-                </TouchableOpacity>
+                    <Text style={styles.cancelText}>إلغاء</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.modalButton, styles.saveBtn]}
+                    onPress={handleUpdateQuantity}
+                  >
+                    {editQuantityLoading ? (
+                      <ActivityIndicator size="small" color="white" />
+                    ) : (
+                      <Text style={styles.saveText}>تحديث وإرجاع</Text>
+                    )}
+                  </Pressable>
+                </View>
               </View>
             </View>
-          </View>
-        </Modal>
-
-        {/* Edit Quantity Modal */}
-      {/* Edit Quantity Modal */}
-<Modal visible={showEditQuantityModal} animationType="slide" transparent>
-  <View style={styles.modalOverlay}>
-    <View style={styles.modalContent}>
-      <Text style={styles.modalTitle}>تعديل كمية المادة</Text>
-      
-      <View style={styles.quantityInfoContainer}>
-        <Text style={styles.quantityInfoLabel}>المادة:</Text>
-        <Text style={styles.quantityInfoValue}>{editingMaterial?.product_name}</Text>
-      </View>
-
-      <View style={styles.quantityInfoContainer}>
-        <Text style={styles.quantityInfoLabel}>الكمية الحالية:</Text>
-        <Text style={styles.quantityInfoValue}>{editingMaterial?.amount}</Text>
-      </View>
-        <Text style={styles.pickerLabel}>ادخل الكمية التي نفّذت</Text>
-
-      <TextInput
-        style={styles.modalInput}
-        placeholder="الكمية الجديدة"
-        placeholderTextColor="#94a3b8"
-        value={newQuantity}
-        onChangeText={setNewQuantity}
-        keyboardType="numeric"
-        textAlign="right"
-      />
-
-      {/* Repository Selection */}
-   {/* Repository Selection */}
-<View style={styles.pickerContainer}>
-  <Text style={styles.pickerLabel}>اختر المستودع للإرجاع:</Text>
-  {repositoriesForReturnLoading ? (
-    <View style={styles.pickerLoadingContainer}>
-      <ActivityIndicator size="small" color="#3b82f6" />
-      <Text style={styles.loadingTextSmall}>جاري تحميل المستودعات...</Text>
-    </View>
-  ) : (
-    <View style={styles.pickerWrapper}>
-      <Picker
-        selectedValue={selectedRepository}
-        onValueChange={(itemValue, itemIndex) => {
-          setSelectedRepository(itemValue);
-          if (itemValue && repositoriesForReturn[itemIndex - 1]) {
-            setSelectedRepositoryId(repositoriesForReturn[itemIndex - 1].id);
-          } else {
-            setSelectedRepositoryId(null);
-          }
-        }}
-        style={styles.picker}
-        dropdownIconColor="#4B5563"
-      >
-        <Picker.Item 
-          label="اختر المستودع..." 
-          value="" 
-          color="#94a3b8"
-          style={{ fontSize: 16, paddingVertical: 12 }}
-        />
-        {repositoriesForReturn.map((repo) => (
-          <Picker.Item 
-            key={repo.id} 
-            label={repo.name} 
-            value={repo.name} 
-            style={{ 
-              fontSize: 16,
-              fontWeight: '500',
-              paddingVertical: 12,
-            }}
-          />
-        ))}
-      </Picker>
-    </View>
-  )}
-</View>
-      
-      <View style={styles.modalActions}>
-        <Pressable
-          style={[styles.modalButton, styles.cancelBtn]}
-          onPress={() => {
-            setShowEditQuantityModal(false);
-            setEditingMaterial(null);
-            setNewQuantity('');
-            setSelectedRepository('');
-            setSelectedRepositoryId(null);
-          }}
-        >
-          <Text style={styles.cancelText}>إلغاء</Text>
-        </Pressable>
-        <Pressable 
-          style={[styles.modalButton, styles.saveBtn]} 
-          onPress={handleUpdateQuantity}
-          disabled={editQuantityLoading || !newQuantity.trim() || !selectedRepository}
-        >
-          {editQuantityLoading ? (
-            <ActivityIndicator size="small" color="white" />
-          ) : (
-            <Text style={styles.saveText}>تحديث وإرجاع</Text>
-          )}
-        </Pressable>
-      </View>
-    </View>
-  </View>
-</Modal>
-      </View>
-    </RefreshableScreen>
-  </MainLayout>
-);
+          </Modal>
+        </View>
+      </RefreshableScreen>
+    </MainLayout>
+  );
 };
 
 const styles = StyleSheet.create({
@@ -1593,16 +1836,17 @@ const styles = StyleSheet.create({
   actionButtonText: {
     fontSize: 12,
     fontWeight: 'bold',
-  },editQuantityButton: {
-  flexDirection: 'row-reverse',
-  alignItems: 'center',
-  backgroundColor: '#f0f9ff',
-  paddingHorizontal: 12,
-  paddingVertical: 6,
-  borderRadius: 6,
-  borderWidth: 1,
-  borderColor: '#3b82f6',
-},
+  },
+  editQuantityButton: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    backgroundColor: '#f0f9ff',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#3b82f6',
+  },
   editQuantityText: {
     color: '#3b82f6',
     fontSize: 12,
@@ -1628,7 +1872,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1f2937',
   },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: '#000000aa',
@@ -1862,15 +2105,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  materialInfo: { 
-    flex: 1, 
-    marginRight: 12 
+  materialInfo: {
+    flex: 1,
+    marginRight: 12,
   },
-  materialName: { 
-    fontSize: 18, 
-    fontWeight: '700', 
-    color: '#1f2937', 
-    textAlign: 'right', 
+  materialName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1f2937',
+    textAlign: 'right',
     marginBottom: 6,
   },
   amountContainer: {
@@ -1883,10 +2126,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginLeft: 10,
   },
-  amountText: { 
-    fontSize: 16, 
-    fontWeight: '700', 
-    color: '#FFF' 
+  amountText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFF',
   },
   itemsContainer: {
     backgroundColor: '#FFF',
@@ -1902,28 +2145,28 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
   },
   buttonRow: {
-  flexDirection: 'row-reverse',
-  justifyContent: 'flex-start',
-  alignItems: 'center',
-  marginTop: 8,
-  gap: 8,
-},
-confirmButton: {
-  flexDirection: 'row-reverse',
-  alignItems: 'center',
-  backgroundColor: '#f0fdf4',
-  paddingHorizontal: 12,
-  paddingVertical: 6,
-  borderRadius: 6,
-  borderWidth: 1,
-  borderColor: '#22c55e',
-},
-confirmButtonText: {
-  color: '#22c55e',
-  fontSize: 12,
-  fontWeight: '600',
-  marginRight: 4,
-},
+    flexDirection: 'row-reverse',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 8,
+  },
+  confirmButton: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#22c55e',
+  },
+  confirmButtonText: {
+    color: '#22c55e',
+    fontSize: 12,
+    fontWeight: '600',
+    marginRight: 4,
+  },
   itemRow: {
     flexDirection: 'row-reverse',
     justifyContent: 'space-between',
@@ -2038,12 +2281,12 @@ confirmButtonText: {
   loadingContainerSmall: {
     padding: 20,
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
   },
   loadingTextSmall: {
     marginTop: 8,
     fontSize: 14,
-    color: '#64748b'
+    color: '#64748b',
   },
   emptyState: {
     flex: 1,
@@ -2051,8 +2294,6 @@ confirmButtonText: {
     alignItems: 'center',
     marginTop: 40,
   },
-
-  // ✅ New styles for the bottom "End Workshop" button
   endWorkshopButtonContainer: {
     marginTop: 20,
     marginBottom: 30,
@@ -2077,8 +2318,79 @@ confirmButtonText: {
     fontWeight: 'bold',
     fontSize: 16,
   },
- 
-
+  // ✅ NEW: Unified Destination Box Styles - IMPROVED
+  unifiedDestinationBox: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+    padding: 20,
+    marginTop: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  unifiedBoxTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 16,
+    textAlign: 'right',
+    color: '#0f172a',
+    letterSpacing: -0.3,
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#f1f5f6',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  toggleButton: {
+    flex: 1,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRightWidth: 1,
+    borderRightColor: '#e2e8f0',
+    position: 'relative',
+  },
+  toggleButtonActive: {
+    backgroundColor: '#3b82f6',
+  },
+  toggleButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#475569',
+    letterSpacing: -0.2,
+  },
+  toggleButtonTextActive: {
+    color: 'white',
+  },
+  // Indicator dot for active state
+  toggleIndicator: {
+    position: 'absolute',
+    bottom: 4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#3b82f6',
+  },
+  dropdownContainer: {
+    marginTop: 12,
+  },
+  placeholderText: {
+    fontSize: 15,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginTop: 16,
+    fontStyle: 'italic',
+    fontWeight: '500',
+  },
 });
 
-export default AdminWorkshops;
+export default adminWorkshops;

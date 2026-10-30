@@ -50,7 +50,10 @@ const AWBottomNavigation: React.FC = () => {
 
   const navItems: NavItemProps[] = useMemo(
     () => [
-      { path: "Aworkshop", icon: "Home", label: " الرئيسية" },
+      { path: "Workshops", icon: "Home", label: " الرئيسية" },
+      { path: 'Reservations', icon: 'Reservations', label: 'الحجوزات'},
+      { path: 'Notifications', icon: 'Bell', label: 'الإشعارات' },
+
       { path: 'Account', icon: 'Account', label: 'الحساب' },
     ],
     []

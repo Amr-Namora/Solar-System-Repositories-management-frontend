@@ -96,7 +96,7 @@ const Index: React.FC = () => {
   const [loading, setLoading] = useState(true);
   // ❌ REMOVED: const [refreshing, setRefreshing] = useState(false);
   const [expandedIds, setExpandedIds] = useState<number[]>([]);
-  const [expandedItems, setExpandedItems] = useState<{[key: string]: boolean}>({});
+  const [expandedItems, setExpandedItems] = useState<{ [key: string]: boolean }>({});
   const navigation = useNavigation();
 
   useEffect(() => {
@@ -130,15 +130,15 @@ const Index: React.FC = () => {
       setLoading(true);
       const token = await AsyncStorage.getItem('access_token');
       if (!token) throw new Error('No token found');
-      
+
       const response = await fetch(`${API_BASE_URL}/home/`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      
+
       if (!response.ok) throw new Error('Failed to fetch home data');
-      
+
       const data: HomeApiResponse = await response.json();
-      
+
       const materialsData = data.serialize.map((item: any, index: number) => ({
         id: index + 1,
         name: item.name,
@@ -159,24 +159,24 @@ const Index: React.FC = () => {
 
   const fetchProductTypes = async (materialName: string, materialId: number) => {
     try {
-      setMaterials(prev => prev.map(m => 
-        m.id === materialId ? {...m, loadingDetails: true} : m
+      setMaterials(prev => prev.map(m =>
+        m.id === materialId ? { ...m, loadingDetails: true } : m
       ));
 
       const token = await AsyncStorage.getItem('access_token');
       if (!token) throw new Error('No token found');
-      
+
       const response = await fetch(
-        `${API_BASE_URL}/product_types/?product_name=${encodeURIComponent(materialName)}`, 
+        `${API_BASE_URL}/product_types/?product_name=${encodeURIComponent(materialName)}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
-      
+
       if (!response.ok) throw new Error('Failed to fetch product types');
-      
+
       const data: ProductTypesResponse = await response.json();
-      
+
       const itemsData = data.serialize.map((item: { type: string }) => ({
         type: item.type,
         reserved: false,
@@ -184,15 +184,15 @@ const Index: React.FC = () => {
         loadingDetails: false
       }));
 
-      setMaterials(prev => prev.map(m => 
-        m.id === materialId ? {...m, items: itemsData, loadingDetails: false} : m
+      setMaterials(prev => prev.map(m =>
+        m.id === materialId ? { ...m, items: itemsData, loadingDetails: false } : m
       ));
     } catch (e) {
       console.error('Error fetching product types:', e);
       Alert.alert('خطأ', 'فشل في تحميل تفاصيل المادة');
-      
-      setMaterials(prev => prev.map(m => 
-        m.id === materialId ? {...m, loadingDetails: false} : m
+
+      setMaterials(prev => prev.map(m =>
+        m.id === materialId ? { ...m, loadingDetails: false } : m
       ));
     }
   };
@@ -206,25 +206,25 @@ const Index: React.FC = () => {
             ...updatedItems[itemIndex],
             loadingDetails: true
           };
-          return {...m, items: updatedItems};
+          return { ...m, items: updatedItems };
         }
         return m;
       }));
 
       const token = await AsyncStorage.getItem('access_token');
       if (!token) throw new Error('No token found');
-      
+
       const response = await fetch(
-        `${API_BASE_URL}/product_details/?product_name=${encodeURIComponent(productName)}&product_class=${encodeURIComponent(productClass)}`, 
+        `${API_BASE_URL}/product_details/?product_name=${encodeURIComponent(productName)}&product_class=${encodeURIComponent(productClass)}`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
-      
+
       if (!response.ok) throw new Error('Failed to fetch product details');
-      
+
       const data: ProductDetailsResponse = await response.json();
-      
+
       setMaterials(prev => prev.map(m => {
         if (m.id === materialId && m.items) {
           const updatedItems = [...m.items];
@@ -233,14 +233,14 @@ const Index: React.FC = () => {
             details: data.serialize,
             loadingDetails: false
           };
-          return {...m, items: updatedItems};
+          return { ...m, items: updatedItems };
         }
         return m;
       }));
     } catch (e) {
       console.error('Error fetching product details:', e);
       Alert.alert('خطأ', 'فشل في تحميل تفاصيل المنتج');
-      
+
       setMaterials(prev => prev.map(m => {
         if (m.id === materialId && m.items) {
           const updatedItems = [...m.items];
@@ -248,7 +248,7 @@ const Index: React.FC = () => {
             ...updatedItems[itemIndex],
             loadingDetails: false
           };
-          return {...m, items: updatedItems};
+          return { ...m, items: updatedItems };
         }
         return m;
       }));
@@ -263,14 +263,14 @@ const Index: React.FC = () => {
 
   const toggleExpand = async (material: Material) => {
     const isExpanded = expandedIds.includes(material.id);
-    
+
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    
+
     if (isExpanded) {
       setExpandedIds((prev) => prev.filter((i) => i !== material.id));
     } else {
       setExpandedIds((prev) => [...prev, material.id]);
-      
+
       if (!material.items || material.items.length === 0) {
         await fetchProductTypes(material.name, material.id);
       }
@@ -280,9 +280,9 @@ const Index: React.FC = () => {
   const toggleItemExpand = async (materialId: number, itemIndex: number, materialName: string, itemType: string) => {
     const key = `${materialId}-${itemIndex}`;
     const isExpanded = expandedItems[key];
-    
+
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    
+
     if (isExpanded) {
       setExpandedItems(prev => ({
         ...prev,
@@ -293,11 +293,11 @@ const Index: React.FC = () => {
         ...prev,
         [key]: true
       }));
-      
+
       const material = materials.find(m => m.id === materialId);
       if (material && material.items && material.items[itemIndex]) {
         const item = material.items[itemIndex];
-        
+
         if (!item.details || item.details.length === 0) {
           await fetchProductDetails(materialId, itemIndex, materialName, itemType);
         }
@@ -324,14 +324,14 @@ const Index: React.FC = () => {
 
   return (
     <MainLayout userType="admin">
-       {loading ? (
+      {loading ? (
         <AppLoader />
       ) : (
         <RefreshableScreen onRefresh={onRefresh}>
           <View style={commonStyles.container}>
-  <View style={commonStyles.header}>
-    <Text style={commonStyles.title}>لوحة التحكم</Text>
-  </View>
+            <View style={commonStyles.header}>
+              <Text style={commonStyles.title}>لوحة التحكم</Text>
+            </View>
 
             {/* Quick Actions */}
             <View style={styles.quickActions}>
@@ -355,54 +355,63 @@ const Index: React.FC = () => {
                 icon="bell" // ✅ Changed to FontAwesome5 'bell'
                 gradient={['#6366f1', '#4f46e5']}
                 onPress={() => navigation.navigate('Notifications' as never)}
-              />  
+              />
               <GradientCard
                 title="الحجوزات"
                 desc="إدارة طلبات الحجز"
                 icon="calendar-check" // ✅ Keep — already works
-                gradient={['#f59e0b', '#d97706']}
+                gradient={['#8b5cf6', '#6d0b7a']}
                 onPress={() => navigation.navigate('Reservations' as never)}
-              />  
-              <GradientCard
-                title="سجل العمليات"
-                desc="عرض جميع العمليات"
-                icon="history"
-                gradient={['#14b8a6', '#0f766e']}
-                onPress={() => navigation.navigate('History' as never)}
               />
+             
               <GradientCard
-      title="إدارة الورشات"
-      desc="عرض وإضافة الورشات"
-      icon="wrench"
-      gradient={['#8b5cf6', '#7c3aed']}
-      onPress={() => navigation.navigate('AdminWorkshops' as never)}
-    />
+                title="إدارة الورشات"
+                desc="عرض وإضافة الورشات"
+                icon="wrench"
+                gradient={['#8b5cf6', '#7c3aed']}
+                onPress={() => navigation.navigate('Workshops' as never)}
+              />
+                <GradientCard
+                title="إدارة الفواتير"
+                desc="عرض جميع العمليات"
+                icon="receipt"
+                gradient={['rgb(81, 28, 240)', '#8c71f0']}
+                onPress={() => navigation.navigate('Customer' as never)}
+              />
               {settings.is_boss && (
                 <>
+                                
                   <GradientCard
                     title="إدارة المستخدمين"
-                    desc="عرض وإضافة مستخدمين" 
+                    desc="عرض وإضافة مستخدمين"
                     icon="users"
-                    gradient={['#22c55e', '#15803d']}
+                    gradient={['#7122c5', '#531580']}
                     onPress={() => navigation.navigate('AdminUsers' as never)}
-                  />  
+                  />
                   <GradientCard
                     title="إدارة المتاجر"
-                    desc="عرض وإضافة المتاجر" 
+                    desc="عرض وإضافة المتاجر"
                     icon="store"
                     gradient={['#6366f1', '#4f46e5']}
                     onPress={() => navigation.navigate('AdminStores' as never)}
-                  />  
+                  />
                   <GradientCard
                     title="إدارة المستودعات"
-                    desc="عرض وإضافة المستودعات" 
+                    desc="عرض وإضافة المستودعات"
                     icon="warehouse"
                     gradient={['#6366f1', '#4f46e5']}
                     onPress={() => navigation.navigate('AdminReposotories' as never)}
-                  />   
+                  />
                 </>
               )}
-            </View> 
+               <GradientCard
+                title="سجل العمليات"
+                desc="عرض جميع العمليات"
+                icon="history"
+                gradient={['#1469b8', '#0f6076']}
+                onPress={() => navigation.navigate('History' as never)}
+              />
+            </View>
           </View>
         </RefreshableScreen>
       )}
@@ -411,7 +420,7 @@ const Index: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  
+
   section: { padding: 20 },
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#1e3a8a', textAlign: 'right' },
   headerSubtitle: { fontSize: 12, color: '#475569', textAlign: 'right' },
@@ -422,21 +431,21 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     paddingHorizontal: 8,
   },
-  sectionTitle: { 
-    fontSize: 24, 
-    fontWeight: '800', 
+  sectionTitle: {
+    fontSize: 24,
+    fontWeight: '800',
     color: '#1e293b',
     textAlign: 'right',
   },
   grid: { flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'space-around', paddingHorizontal: 12, gap: 12 },
-  quickActions: { 
-    flexDirection: 'row', 
-    flexWrap: 'wrap', 
-    gap: 12, 
-    padding: 12, 
-    justifyContent: 'center' 
+  quickActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    padding: 12,
+    justifyContent: 'center'
   },
-  
+
   /* Material-specific styles (kept for future expansion) */
   materialCard: {
     backgroundColor: '#fff',
@@ -462,20 +471,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  materialInfo: { 
-    flex: 1, 
-    marginRight: 12 
+  materialInfo: {
+    flex: 1,
+    marginRight: 12
   },
-  materialName: { 
-    fontSize: 18, 
-    fontWeight: '700', 
-    color: '#1f2937', 
-    textAlign: 'right', 
+  materialName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1f2937',
+    textAlign: 'right',
     marginBottom: 6,
   },
-  materialDetails: { 
-    fontSize: 14, 
-    color: '#64748b', 
+  materialDetails: {
+    fontSize: 14,
+    color: '#64748b',
     textAlign: 'right',
     lineHeight: 20,
   },
@@ -489,10 +498,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     marginLeft: 10,
   },
-  amountText: { 
-    fontSize: 16, 
-    fontWeight: '700', 
-    color: '#FFF' 
+  amountText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFF'
   },
   itemsContainer: {
     backgroundColor: '#FFF',

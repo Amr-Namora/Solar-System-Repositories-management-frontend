@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -17,16 +18,61 @@ import { getStatusBarHeight } from 'react-native-status-bar-height';
 import RefreshableScreen from '../component/RefreshableScreen';
 import { useNavigation } from '@react-navigation/native';
 import AppLoader from '../component/AppLoader';
+
+const STORAGE_KEYS = {
+  SEARCH_TERM: 'searchTerm',
+  SEARCH_TYPE: 'searchType',
+  SEARCH_CATEGORY: 'searchCategory',
+};
+
 const SearchScreen = () => {
   const navigation = useNavigation<any>();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
-  const [userType, setUserType] = useState<'admin' | 'employee'>('employee');
+  const [userType, setUserType] = useState<'admin' | 'storeKeeper' | 'user'>('user');
   const [loading, setLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [fetchingCategories, setFetchingCategories] = useState(true);
+
+  // Load saved filters when screen comes into focus
+  useEffect(() => {
+    const loadSavedFilters = async () => {
+      try {
+        const [savedTerm, savedType, savedCategory] = await Promise.all([
+          AsyncStorage.getItem(STORAGE_KEYS.SEARCH_TERM),
+          AsyncStorage.getItem(STORAGE_KEYS.SEARCH_TYPE),
+          AsyncStorage.getItem(STORAGE_KEYS.SEARCH_CATEGORY),
+        ]);
+
+        setSearchTerm(savedTerm ?? '');
+        setSelectedType(savedType ?? '');
+        setSelectedCategory(savedCategory ?? '');
+      } catch (error) {
+        console.error('Error loading search filters:', error);
+      }
+    };
+
+    const unsubscribe = navigation.addListener('focus', loadSavedFilters);
+    return unsubscribe;
+  }, [navigation]);
+
+  // Save filters automatically with debounce
+  useEffect(() => {
+    const saveFilters = async () => {
+      try {
+        await AsyncStorage.setItem(STORAGE_KEYS.SEARCH_TERM, searchTerm);
+        await AsyncStorage.setItem(STORAGE_KEYS.SEARCH_TYPE, selectedType);
+        await AsyncStorage.setItem(STORAGE_KEYS.SEARCH_CATEGORY, selectedCategory);
+      } catch (error) {
+        console.error('Error saving search filters:', error);
+      }
+    };
+
+    const timeoutId = setTimeout(saveFilters, 500);
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, selectedType, selectedCategory]);
 
   const fetchCategories = async () => {
     try {
@@ -34,15 +80,12 @@ const SearchScreen = () => {
       if (!token) return;
       
       const response = await fetch(`${API_BASE_URL}/homeRead/`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { Authorization: `Bearer ${token}` }
       });
       
       if (!response.ok) throw new Error('Failed to fetch categories');
       
       const data = await response.json();
-      
       const uniqueNames = Array.from(
         new Set(data.serialize.map((item: any) => item.name))
       ).filter(Boolean) as string[];
@@ -63,15 +106,12 @@ const SearchScreen = () => {
       if (!token) return;
       
       const params = new URLSearchParams();
-      
       if (searchTerm) params.append('query', searchTerm);
       if (selectedType) params.append('status', selectedType);
       if (selectedCategory) params.append('category', selectedCategory);
       
       const response = await fetch(`${API_BASE_URL}/search/?${params.toString()}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { Authorization: `Bearer ${token}` }
       });
       
       if (!response.ok) throw new Error('Failed to fetch search results');
@@ -108,14 +148,20 @@ const SearchScreen = () => {
   useEffect(() => {
     const fetchUserType = async () => {
       const stored = await AsyncStorage.getItem('userType');
-      if (stored === 'admin' || stored === 'employee') {
+      if (stored === 'admin' || stored === 'user' || stored === 'storeKeeper') {
         setUserType(stored); 
       } else {
-        setUserType('employee');
+        setUserType('user');
       }
     };
     fetchUserType();
   }, []);
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setSelectedType('');
+    setSelectedCategory('');
+  };
 
   const types = ['متاح'];
 
@@ -138,6 +184,16 @@ const SearchScreen = () => {
               onChangeText={setSearchTerm}
             />
           </View>
+
+          {/* زر إلغاء الفلتر */}
+          {(searchTerm || selectedType || selectedCategory) && (
+            <View style={styles.clearFilterContainer}>
+              <TouchableOpacity onPress={clearFilters} style={styles.clearButton} activeOpacity={0.7}>
+                <Text style={styles.clearButtonText}>إلغاء الفلتر</Text>
+                <Feather name="x-circle" size={18} color="#DC2626" style={styles.clearIcon} />
+              </TouchableOpacity>
+            </View>
+          )}
 
           <Text style={styles.sectionTitle}>نوع العملية</Text>
           <View style={styles.optionsContainer}>
@@ -193,8 +249,8 @@ const SearchScreen = () => {
 
           <Text style={styles.sectionTitle}>نتائج البحث</Text>
           {loading ? (
-        <AppLoader />
-      ) : searchResults.length > 0 ? (
+            <AppLoader />
+          ) : searchResults.length > 0 ? (
             searchResults.map((item, index) => (
               <TouchableOpacity
                 key={index}
@@ -283,7 +339,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    marginBottom: 24,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#e2e8f0',
     shadowColor: '#000',
@@ -299,6 +355,36 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 16,
     color: '#1e293b',
+    textAlign: 'right',
+  },
+  clearFilterContainer: {
+    alignItems: 'flex-start', // Aligns to Right in RTL context
+    marginBottom: 20,
+    paddingHorizontal: 4,
+  },
+  clearButton: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    gap: 8,
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  clearIcon: {
+    marginLeft: 4,
+  },
+  clearButtonText: {
+    color: '#DC2626',
+    fontSize: 14,
+    fontWeight: '700',
     textAlign: 'right',
   },
   sectionTitle: {

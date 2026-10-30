@@ -1,3 +1,4 @@
+//  Account.tsx
 import React, { useState, useEffect } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Badge } from '../component/Badge';
@@ -13,6 +14,8 @@ import {
   Modal,
   Alert,
 } from 'react-native';
+import { unregisterPushTokenFromBackend } from '../utils/pushNotifications'; // adjust path
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import MainLayout from '../component/MainLayout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from './api2';
@@ -30,7 +33,6 @@ interface UserInfo {
 }
 
 // ✅ Now includes 'adminworkshop'
-type UserType = 'admin' | 'employee' | 'adminworkshop';
 
 interface AccountContentProps {
   userInfo: UserInfo | null;
@@ -45,10 +47,13 @@ const AccountContent: React.FC<AccountContentProps> = ({
   loading,
   onLogout, // ✅ Destructure onLogout
 }) => {
+    const [localUserType, setLocalUserType] = useState<string>('');
+
   const [passwordModalVisible, setPasswordModalVisible] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-
+const [showNewPassword, setShowNewPassword] = useState(false);
+const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const handlePasswordSave = async () => {
     if (newPassword.length < 6) {
       Alert.alert('خطأ', 'يجب أن تكون كلمة المرور على الأقل 6 أحرف');
@@ -81,6 +86,13 @@ const AccountContent: React.FC<AccountContentProps> = ({
     } catch (error: any) {
       Alert.alert('خطأ', error.message || 'حدث خطأ أثناء تغيير كلمة السر');
     }
+    useEffect(() => {
+    const getUserType = async () => {
+      const storedUserType = await AsyncStorage.getItem('userType');
+      setLocalUserType(storedUserType || 'user');
+    };
+    getUserType();
+  }, []);
   };
 
   return (
@@ -101,7 +113,7 @@ const AccountContent: React.FC<AccountContentProps> = ({
                   text={
                     userInfo?.is_staff
                       ? 'المسؤول'
-                      : userInfo?.store_name === null
+        : localUserType === 'workshopManager'
                       ? 'مسؤول ورشة'
                       : 'المتجر'
                   }
@@ -158,62 +170,89 @@ const AccountContent: React.FC<AccountContentProps> = ({
         </View>
 
         {/* Password Change Modal */}
-        <Modal
-          animationType="slide"
-          transparent={true}
-          visible={passwordModalVisible}
-          onRequestClose={() => setPasswordModalVisible(false)}
+       <Modal
+  animationType="slide"
+  transparent={true}
+  visible={passwordModalVisible}
+  onRequestClose={() => setPasswordModalVisible(false)}
+>
+  <View style={styles.modalOverlay}>
+    <View style={styles.modalContainer}>
+      <Text style={styles.modalTitle}>تغيير كلمة المرور</Text>
+
+      {/* New Password Input with Eye Icon */}
+      <View style={styles.passwordContainer}>
+        <TextInput
+          style={styles.passwordInput}
+          placeholder="أدخل كلمة المرور الجديدة"
+          placeholderTextColor="#999"
+          secureTextEntry={!showNewPassword}
+          value={newPassword}
+          onChangeText={setNewPassword}
+          textAlign="right"
+        />
+        <TouchableOpacity
+          style={styles.eyeButton}
+          onPress={() => setShowNewPassword(!showNewPassword)}
         >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContainer}>
-              <Text style={styles.modalTitle}>تغيير كلمة المرور</Text>
+          <MaterialCommunityIcons
+            name={showNewPassword ? "eye-off" : "eye"}
+            size={20}
+            color="#6b7280"
+          />
+        </TouchableOpacity>
+      </View>
 
-              <TextInput
-                style={styles.input}
-                placeholder="أدخل كلمة المرور الجديدة"
-                placeholderTextColor="#999"
-                secureTextEntry
-                value={newPassword}
-                onChangeText={setNewPassword}
-                textAlign="right"
-              />
+      {/* Confirm Password Input with Eye Icon */}
+      <View style={styles.passwordContainer}>
+        <TextInput
+          style={styles.passwordInput}
+          placeholder="تأكيد كلمة المرور"
+          placeholderTextColor="#999"
+          secureTextEntry={!showConfirmPassword}
+          value={confirmPassword}
+          onChangeText={setConfirmPassword}
+          textAlign="right"
+        />
+        <TouchableOpacity
+          style={styles.eyeButton}
+          onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+        >
+          <MaterialCommunityIcons
+            name={showConfirmPassword ? "eye-off" : "eye"}
+            size={20}
+            color="#6b7280"
+          />
+        </TouchableOpacity>
+      </View>
 
-              <TextInput
-                style={styles.input}
-                placeholder="تأكيد كلمة المرور"
-                placeholderTextColor="#999"
-                secureTextEntry
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                textAlign="right"
-              />
+      <View style={styles.modalButtons}>
+        <TouchableOpacity
+          style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
+          onPress={() => setPasswordModalVisible(false)}
+        >
+          <Text style={styles.modalButtonText}>إلغاء</Text>
+        </TouchableOpacity>
 
-              <View style={styles.modalButtons}>
-                <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: '#ef4444' }]}
-                  onPress={() => setPasswordModalVisible(false)}
-                >
-                  <Text style={styles.modalButtonText}>إلغاء</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: '#22c55e' }]}
-                  onPress={handlePasswordSave}
-                >
-                  <Text style={styles.modalButtonText}>حفظ</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
+        <TouchableOpacity
+          style={[styles.modalButton, { backgroundColor: '#22c55e' }]}
+          onPress={handlePasswordSave}
+        >
+          <Text style={styles.modalButtonText}>حفظ</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
       </View>
     </RefreshableScreen>
   );
 };
-
 const AccountScreen = () => {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [userType, setUserType] = useState<string>('');
+  const [mounted, setMounted] = useState(false);
 
   const fetchProfile = async () => {
     try {
@@ -234,7 +273,7 @@ const AccountScreen = () => {
         username: data.username,
         is_staff: data.is_staff,
         is_active: data.is_active,
-        store_name: data.store, // assuming your API returns `store`
+        store_name: data.store,
       });
     } catch (e) {
       console.error(e);
@@ -243,12 +282,17 @@ const AccountScreen = () => {
       setLoading(false);
     }
   };
-const navigation = useNavigation<any>();
 
-const handleLogout = async () => {
+  const navigation = useNavigation<any>();
+
+  const handleLogout = async () => {
   try {
+    await unregisterPushTokenFromBackend(API_BASE_URL);
     await AsyncStorage.removeItem('access_token');
-    navigation.replace('Login'); 
+    await AsyncStorage.removeItem('userType');
+    await AsyncStorage.removeItem('userRole');
+    await AsyncStorage.removeItem('isLoggedIn');
+    navigation.replace('Login');
   } catch (error) {
     console.error('Logout error:', error);
     Alert.alert('خطأ', 'فشل تسجيل الخروج');
@@ -256,32 +300,34 @@ const handleLogout = async () => {
 };
 
   useEffect(() => {
-    fetchProfile();
+    const init = async () => {
+      await fetchProfile();
+      const storedUserType = await AsyncStorage.getItem('userType');
+      console.log('AccountScreen - UserType from storage:', storedUserType);
+      setUserType(storedUserType ?? '');
+      setMounted(true);
+    };
+    init();
   }, []);
 
-  const getUserType = (): UserType => {
-    if (!userInfo) return 'employee'; 
-    if (userInfo.is_staff) return 'admin';
-    if (userInfo.store_name === null) return 'adminworkshop'; 
-    return 'employee'; // regular store user
-  };
+  // Debug what we're passing to MainLayout
+  console.log('AccountScreen passing to MainLayout userType:', userType);
 
   if (loading) {
     return <AppLoader />;
   }
 
   return (
-    <MainLayout userType={getUserType()}>
+    <MainLayout userType={userType}>
       <AccountContent
         userInfo={userInfo}
         onRefresh={fetchProfile}
         loading={loading}
-        onLogout={handleLogout} // ✅ Pass logout handler
+        onLogout={handleLogout}
       />
     </MainLayout>
   );
 };
-
 export default AccountScreen;
 
 // Styles (unchanged)
@@ -421,4 +467,24 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 14,
   },
+  passwordContainer: {
+  flexDirection: 'row-reverse',
+  alignItems: 'center',
+  borderWidth: 1,
+  borderColor: '#d1d5db',
+  borderRadius: 8,
+  marginVertical: 6,
+  paddingRight: 12,
+  width: '100%',
+},
+passwordInput: {
+  flex: 1,
+  padding: 12,
+  textAlign: 'right',
+  color: '#000000',
+  fontSize: 16,
+},
+eyeButton: {
+  padding: 4,
+},
 });
